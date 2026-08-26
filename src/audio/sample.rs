@@ -351,6 +351,8 @@ mod tests {
 
     // ── bounded decoding ────────────────────────────────────────────────
 
+    // Decoding only exists with the feature; without it these have no meaning.
+    #[cfg(feature = "embedded-audio")]
     #[test]
     fn a_real_sample_decodes_and_is_normalized() {
         let (_dir, path) = pack_with_sample();
@@ -420,6 +422,8 @@ mod tests {
         }
     }
 
+    // Decoding only exists with the feature; without it these have no meaning.
+    #[cfg(feature = "embedded-audio")]
     #[test]
     fn a_sample_longer_than_the_cap_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -442,6 +446,8 @@ mod tests {
         );
     }
 
+    // Decoding only exists with the feature; without it these have no meaning.
+    #[cfg(feature = "embedded-audio")]
     #[test]
     fn a_sample_just_under_the_cap_still_loads() {
         let dir = tempfile::tempdir().unwrap();
@@ -458,6 +464,16 @@ mod tests {
         )
         .unwrap();
         assert!(load(&path).is_ok());
+    }
+
+    #[cfg(not(feature = "embedded-audio"))]
+    #[test]
+    fn without_a_decoder_samples_fail_cleanly_rather_than_silently() {
+        // A musl build ships without the decoder. Pointing it at a real file
+        // must produce a reported error, not a panic and not silence that looks
+        // like success.
+        let (_dir, path) = pack_with_sample();
+        assert!(matches!(load(&path), Err(SampleError::Undecodable(_))));
     }
 
     // ── identity shifting ───────────────────────────────────────────────

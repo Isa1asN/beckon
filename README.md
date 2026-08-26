@@ -1,5 +1,7 @@
 # beckon
 
+[![CI](https://github.com/Isa1asN/beckon/actions/workflows/ci.yml/badge.svg)](https://github.com/Isa1asN/beckon/actions/workflows/ci.yml)
+
 Distinct sounds for your AI coding agent, so you don't have to watch the
 terminal.
 
@@ -39,16 +41,20 @@ normalised. Content is preserved; the backup keeps the original bytes.
 
 ## Platform support
 
-| | Builds | Tested |
-|---|---|---|
-| Linux x86-64 | yes | yes |
-| macOS | yes | no |
-| Windows | yes | no |
+| | Builds | Test suite | Audio verified |
+|---|---|---|---|
+| Linux x86-64 | yes | yes | yes |
+| macOS | yes | in CI | no |
+| Windows | yes | in CI | no |
 
-Cross-compilation is verified for all three, with and without the
-`embedded-audio` feature. Only Linux has been run. macOS and Windows should
-work — the audio and install paths have platform-specific branches — but
-nobody has exercised them. Reports welcome.
+CI runs the full suite on all three. CI runners have no sound device, so
+playback there goes through the null backend — the macOS and Windows audio paths
+compile and are exercised structurally, but nobody has heard them. Reports
+welcome.
+
+Also built without the `embedded-audio` feature, which is the shape a fully
+static musl binary takes: no cpal, no libasound, falling back to a system
+player.
 
 Requires Claude Code. Other agents are planned; the adapter seam exists and is
 documented in [docs/DESIGN.md](docs/DESIGN.md).
@@ -165,7 +171,7 @@ a pack's samples must resolve inside the pack after symlinks are followed.
 ## Roadmap
 
 - [ ] Publish to crates.io
-- [ ] Verify on macOS and Windows
+- [ ] Hear it on macOS and Windows (CI builds and tests there already)
 - [ ] `beckon install github:user/repo` — packs from git
 - [ ] A browsable community pack index
 - [ ] SSH: escape sequences so a remote agent alerts your local terminal

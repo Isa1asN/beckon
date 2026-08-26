@@ -453,7 +453,10 @@ fn a_path_with_spaces_is_still_recognised_as_our_own() {
     let e = Env::new();
     let dir = e._home.path().join("my bin");
     std::fs::create_dir_all(&dir).unwrap();
-    let exe = dir.join("beckon");
+    // Keep the original file name: on Windows a copy without `.exe` cannot be
+    // executed at all.
+    let source = assert_cmd::cargo::cargo_bin("beckon");
+    let exe = dir.join(source.file_name().unwrap());
 
     // Retry: cargo may still be writing target/debug/beckon when a sibling test
     // binary starts, and copying a file being written fails with ETXTBSY.
@@ -463,7 +466,6 @@ fn a_path_with_spaces_is_still_recognised_as_our_own() {
     // while this copy is open can leave the descriptor held in its child — the
     // exec then fails with ETXTBSY. Both steps are retried because either can
     // lose the race.
-    let source = assert_cmd::cargo::cargo_bin("beckon");
     let mut ready = false;
     for _ in 0..40 {
         if std::fs::copy(&source, &exe).is_ok()

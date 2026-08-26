@@ -2,7 +2,7 @@
 name = "beckon-cli"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 description = "Give your AI coding agent a voice: distinct sounds for done, needs-you, and failed."
 repository = "https://github.com/esayas-beshah/beckon"
