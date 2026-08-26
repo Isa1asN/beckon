@@ -1,0 +1,150 @@
+# unit-7 — a deadpan lab robot.
+#
+# FM bleeps, mechanical and dry, with no reverb anywhere. Melodies are
+# deliberately flat: `done` repeats a pitch rather than resolving upward,
+# because unit-7 does not celebrate.
+
+[pack]
+id = "unit-7"
+name = "Unit 7"
+version = "1.0.0"
+author = "beckon"
+license = "CC0-1.0"
+description = "A deadpan lab robot. Mechanical FM bleeps, no reverb, no drama."
+beckon = "^0"
+
+# Two flat repeats and the smallest possible lift at the end.
+[sounds.done]
+type = "synth"
+gain = 0.9
+
+[[sounds.done.layer]]
+wave = "fm"
+notes = ["C5", "C5", "E5"]
+fm = { ratio = 2.0, index = 2.4 }
+step_ms = 86
+dur_ms = 68
+attack_ms = 2
+decay_ms = 22
+sustain = 0.55
+release_ms = 60
+
+# Three identical beeps. Not a melody — a request.
+[sounds.needs-you]
+type = "synth"
+gain = 1.0
+
+[[sounds.needs-you.layer]]
+wave = "fm"
+notes = ["A5", "A5", "A5"]
+fm = { ratio = 3.0, index = 3.8 }
+step_ms = 108
+dur_ms = 70
+attack_ms = 1
+decay_ms = 18
+sustain = 0.6
+release_ms = 52
+
+# A slide down. Mechanical disappointment.
+[sounds.failed]
+type = "synth"
+gain = 0.9
+
+[[sounds.failed.layer]]
+wave = "fm"
+notes = ["A4", "A3"]
+fm = { ratio = 1.5, index = 3.0 }
+step_ms = 200
+glide_ms = 240
+dur_ms = 240
+attack_ms = 3
+decay_ms = 70
+sustain = 0.5
+release_ms = 140
+
+# Two tones alternating, like a busy signal.
+[sounds.rate-limited]
+type = "synth"
+gain = 0.85
+
+[[sounds.rate-limited.layer]]
+wave = "fm"
+notes = ["E4", "C4", "E4", "C4"]
+fm = { ratio = 2.0, index = 1.8 }
+step_ms = 220
+dur_ms = 190
+attack_ms = 4
+decay_ms = 50
+sustain = 0.55
+release_ms = 120
+
+[sounds.idle-waiting]
+type = "synth"
+gain = 0.6
+
+[[sounds.idle-waiting.layer]]
+wave = "fm"
+notes = ["C5"]
+fm = { ratio = 2.0, index = 2.0 }
+dur_ms = 90
+attack_ms = 3
+decay_ms = 30
+sustain = 0.45
+release_ms = 90
+
+[sounds.subagent-done]
+type = "synth"
+gain = 0.45
+
+[[sounds.subagent-done.layer]]
+wave = "fm"
+notes = ["G5"]
+fm = { ratio = 4.0, index = 1.6 }
+dur_ms = 52
+attack_ms = 1
+decay_ms = 18
+sustain = 0.3
+release_ms = 55
+
+[sounds.compacting]
+type = "synth"
+gain = 0.4
+
+[[sounds.compacting.layer]]
+wave = "square"
+notes = ["C4", "C4"]
+step_ms = 70
+dur_ms = 44
+attack_ms = 1
+decay_ms = 16
+sustain = 0.3
+release_ms = 50
+filter = { kind = "lowpass", cutoff_hz = 1800, q = 1.0 }
+
+[sounds.session-start]
+type = "synth"
+gain = 0.55
+
+[[sounds.session-start.layer]]
+wave = "fm"
+notes = ["C4"]
+fm = { ratio = 2.0, index = 2.2 }
+dur_ms = 100
+attack_ms = 3
+decay_ms = 34
+sustain = 0.45
+release_ms = 90
+
+[sounds.tool-failed]
+type = "synth"
+gain = 0.5
+
+[[sounds.tool-failed.layer]]
+wave = "fm"
+notes = ["F3"]
+fm = { ratio = 1.5, index = 2.6 }
+dur_ms = 70
+attack_ms = 2
+decay_ms = 26
+sustain = 0.35
+release_ms = 70

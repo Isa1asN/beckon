@@ -1,0 +1,182 @@
+# aurora — a calm starship computer.
+#
+# Soft triangle and sine layers, gently low-passed, with a long reverb tail.
+# Nothing here is urgent except `needs-you`, and even that asks politely.
+# All original: every sound is a synth recipe, so this pack has no licensing
+# surface at all.
+
+[pack]
+id = "aurora"
+name = "Aurora"
+version = "1.0.0"
+author = "beckon"
+license = "CC0-1.0"
+description = "A calm starship computer. Soft, resolved, unhurried."
+beckon = "^0"
+
+# Rising major triad: resolved, "all good, come look".
+[sounds.done]
+type = "synth"
+gain = 0.9
+reverb = { room = 0.55, mix = 0.34 }
+
+[[sounds.done.layer]]
+wave = "triangle"
+notes = ["C5", "E5", "G5"]
+step_ms = 92
+dur_ms = 250
+attack_ms = 14
+decay_ms = 60
+sustain = 0.62
+release_ms = 240
+filter = { kind = "lowpass", cutoff_hz = 3200, q = 0.7 }
+
+# An octave below for warmth, entering with the first note only.
+[[sounds.done.layer]]
+wave = "sine"
+notes = ["C4"]
+dur_ms = 420
+gain = 0.4
+attack_ms = 30
+decay_ms = 120
+sustain = 0.45
+release_ms = 300
+
+# A rising fourth, asked twice. Unresolved on purpose — it wants an answer.
+[sounds.needs-you]
+type = "synth"
+gain = 1.0
+reverb = { room = 0.32, mix = 0.2 }
+
+[[sounds.needs-you.layer]]
+wave = "triangle"
+notes = ["A4", "D5", "A4", "D5"]
+step_ms = 132
+dur_ms = 150
+attack_ms = 6
+decay_ms = 40
+sustain = 0.7
+release_ms = 180
+filter = { kind = "lowpass", cutoff_hz = 4200, q = 0.8 }
+
+# Descending minor, slightly detuned. Something is wrong, but nobody is shouting.
+[sounds.failed]
+type = "synth"
+gain = 0.92
+reverb = { room = 0.42, mix = 0.3 }
+
+[[sounds.failed.layer]]
+wave = "triangle"
+notes = ["G4", "Eb4", "C4"]
+step_ms = 132
+dur_ms = 260
+attack_ms = 10
+decay_ms = 80
+sustain = 0.55
+release_ms = 320
+filter = { kind = "lowpass", cutoff_hz = 1900, q = 0.7 }
+
+[[sounds.failed.layer]]
+wave = "sine"
+notes = ["G3"]
+dur_ms = 520
+gain = 0.34
+detune_cents = -14
+attack_ms = 24
+decay_ms = 160
+sustain = 0.4
+release_ms = 340
+
+# Patient, low, unhurried pulses. You are not being asked to hurry; you cannot.
+# Budgeted for the reverb tail as well as the notes: at room 0.5 the tail adds
+# ~750ms on top of the 1.1s of notes, and much past two seconds you resent it.
+[sounds.rate-limited]
+type = "synth"
+gain = 0.85
+reverb = { room = 0.5, mix = 0.38 }
+
+[[sounds.rate-limited.layer]]
+wave = "sine"
+notes = ["C3", "C3", "C3"]
+step_ms = 280
+dur_ms = 240
+attack_ms = 36
+decay_ms = 110
+sustain = 0.5
+release_ms = 300
+filter = { kind = "lowpass", cutoff_hz = 1200, q = 0.7 }
+
+# A single soft tone. "Still here."
+[sounds.idle-waiting]
+type = "synth"
+gain = 0.62
+reverb = { room = 0.5, mix = 0.32 }
+
+[[sounds.idle-waiting.layer]]
+wave = "sine"
+notes = ["G4"]
+dur_ms = 240
+attack_ms = 30
+decay_ms = 90
+sustain = 0.5
+release_ms = 380
+
+# Deliberately small and high: progress, not completion.
+[sounds.subagent-done]
+type = "synth"
+gain = 0.5
+reverb = { room = 0.4, mix = 0.25 }
+
+[[sounds.subagent-done.layer]]
+wave = "triangle"
+notes = ["G5"]
+dur_ms = 90
+attack_ms = 5
+decay_ms = 40
+sustain = 0.4
+release_ms = 150
+
+[sounds.compacting]
+type = "synth"
+gain = 0.45
+reverb = { room = 0.6, mix = 0.35 }
+
+[[sounds.compacting.layer]]
+wave = "sine"
+notes = ["E4", "C4"]
+step_ms = 120
+dur_ms = 140
+attack_ms = 20
+decay_ms = 70
+sustain = 0.4
+release_ms = 260
+filter = { kind = "lowpass", cutoff_hz = 1600, q = 0.7 }
+
+[sounds.session-start]
+type = "synth"
+gain = 0.6
+reverb = { room = 0.45, mix = 0.28 }
+
+[[sounds.session-start.layer]]
+wave = "sine"
+notes = ["C4", "G4"]
+step_ms = 120
+dur_ms = 180
+attack_ms = 24
+decay_ms = 80
+sustain = 0.5
+release_ms = 260
+
+[sounds.tool-failed]
+type = "synth"
+gain = 0.55
+
+[[sounds.tool-failed.layer]]
+wave = "triangle"
+notes = ["F3"]
+dur_ms = 110
+attack_ms = 4
+decay_ms = 50
+sustain = 0.35
+release_ms = 130
+filter = { kind = "lowpass", cutoff_hz = 1400, q = 0.7 }

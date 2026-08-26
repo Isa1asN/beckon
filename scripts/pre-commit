@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Refuse to commit unformatted or lint-failing code.
+#
+# Install with: ./scripts/install-hooks.sh
+set -euo pipefail
+
+if ! cargo fmt --check >/dev/null 2>&1; then
+    echo "commit refused: code is not formatted."
+    echo "  run: cargo fmt"
+    cargo fmt --check 2>&1 | head -20
+    exit 1
+fi
+
+if ! cargo clippy --all-targets --all-features -- -D warnings >/dev/null 2>&1; then
+    echo "commit refused: clippy found problems."
+    cargo clippy --all-targets --all-features -- -D warnings 2>&1 | grep -E "^(error|warning)" | head -20
+    exit 1
+fi

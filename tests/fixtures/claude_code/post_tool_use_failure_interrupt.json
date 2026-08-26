@@ -1,0 +1,1 @@
+{"session_id":"s1","cwd":"/home/dev/proj","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_use_id":"toolu_02","error":"The user doesn't want to proceed with this tool use.","is_interrupt":true,"duration_ms":1420}

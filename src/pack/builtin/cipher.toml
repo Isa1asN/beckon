@@ -1,0 +1,161 @@
+# cipher — a stealth-game alert.
+#
+# Short, dry, band-passed square and saw with noise transients. Almost no
+# reverb: these are meant to cut, not to bloom. `needs-you` is the classic
+# two-blip "!" sting.
+
+[pack]
+id = "cipher"
+name = "Cipher"
+version = "1.0.0"
+author = "beckon"
+license = "CC0-1.0"
+description = "A stealth-game alert. Short, dry, and it cuts through."
+beckon = "^0"
+
+[sounds.done]
+type = "synth"
+gain = 0.9
+reverb = { room = 0.16, mix = 0.1 }
+
+[[sounds.done.layer]]
+wave = "square"
+notes = ["D5", "A5"]
+step_ms = 72
+dur_ms = 88
+attack_ms = 2
+decay_ms = 26
+sustain = 0.5
+release_ms = 70
+filter = { kind = "bandpass", cutoff_hz = 1800, q = 1.4 }
+
+# The "!" — two sharp blips at one pitch, with a noise tick on the front.
+[sounds.needs-you]
+type = "synth"
+gain = 1.0
+
+[[sounds.needs-you.layer]]
+wave = "square"
+notes = ["A5", "A5"]
+step_ms = 96
+dur_ms = 62
+attack_ms = 1
+decay_ms = 16
+sustain = 0.55
+release_ms = 44
+filter = { kind = "bandpass", cutoff_hz = 2600, q = 2.0 }
+
+[[sounds.needs-you.layer]]
+wave = "noise"
+notes = ["A6"]
+dur_ms = 16
+gain = 0.28
+attack_ms = 0
+decay_ms = 10
+sustain = 0.0
+release_ms = 22
+filter = { kind = "highpass", cutoff_hz = 3200, q = 0.9 }
+
+# A saw sliding down a full octave. Deflating.
+[sounds.failed]
+type = "synth"
+gain = 0.88
+reverb = { room = 0.2, mix = 0.12 }
+
+[[sounds.failed.layer]]
+wave = "saw"
+notes = ["F4", "F3"]
+step_ms = 150
+glide_ms = 170
+dur_ms = 230
+attack_ms = 3
+decay_ms = 60
+sustain = 0.5
+release_ms = 180
+filter = { kind = "lowpass", cutoff_hz = 1250, q = 1.1 }
+
+# Low, blunt, repeating. A closed door.
+[sounds.rate-limited]
+type = "synth"
+gain = 0.85
+
+[[sounds.rate-limited.layer]]
+wave = "square"
+notes = ["C3", "C3", "C3"]
+step_ms = 300
+dur_ms = 190
+attack_ms = 3
+decay_ms = 50
+sustain = 0.5
+release_ms = 150
+filter = { kind = "lowpass", cutoff_hz = 850, q = 1.0 }
+
+[sounds.idle-waiting]
+type = "synth"
+gain = 0.6
+
+[[sounds.idle-waiting.layer]]
+wave = "square"
+notes = ["E5"]
+dur_ms = 70
+attack_ms = 2
+decay_ms = 22
+sustain = 0.4
+release_ms = 60
+filter = { kind = "bandpass", cutoff_hz = 2000, q = 1.6 }
+
+[sounds.subagent-done]
+type = "synth"
+gain = 0.45
+
+[[sounds.subagent-done.layer]]
+wave = "noise"
+notes = ["C6"]
+dur_ms = 50
+attack_ms = 0
+decay_ms = 18
+sustain = 0.15
+release_ms = 60
+filter = { kind = "bandpass", cutoff_hz = 4200, q = 2.2 }
+
+[sounds.compacting]
+type = "synth"
+gain = 0.4
+
+[[sounds.compacting.layer]]
+wave = "noise"
+notes = ["C5"]
+dur_ms = 120
+attack_ms = 20
+decay_ms = 60
+sustain = 0.2
+release_ms = 120
+filter = { kind = "highpass", cutoff_hz = 2200, q = 0.8 }
+
+[sounds.session-start]
+type = "synth"
+gain = 0.55
+
+[[sounds.session-start.layer]]
+wave = "square"
+notes = ["C3"]
+dur_ms = 110
+attack_ms = 3
+decay_ms = 40
+sustain = 0.4
+release_ms = 110
+filter = { kind = "lowpass", cutoff_hz = 700, q = 1.0 }
+
+[sounds.tool-failed]
+type = "synth"
+gain = 0.5
+
+[[sounds.tool-failed.layer]]
+wave = "noise"
+notes = ["G3"]
+dur_ms = 60
+attack_ms = 0
+decay_ms = 24
+sustain = 0.2
+release_ms = 70
+filter = { kind = "lowpass", cutoff_hz = 1100, q = 1.2 }

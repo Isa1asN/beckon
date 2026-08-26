@@ -1,0 +1,19 @@
+# Build output
+/target
+
+# Written by `cargo run --example render_packs` when given no output directory
+/beckon-sounds
+
+# npm distribution wrapper
+/npm/node_modules/
+/npm/*.tgz
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# rustfmt backups
+**/*.rs.bk

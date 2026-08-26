@@ -1,0 +1,1 @@
+{"session_id":"s1","prompt_id":"p1","transcript_path":"/tmp/t.jsonl","cwd":"/home/dev/proj","permission_mode":"default","hook_event_name":"Stop","effort":{"level":"medium"},"last_assistant_message":"Done.","stop_hook_active":false,"background_tasks":[],"session_crons":[]}

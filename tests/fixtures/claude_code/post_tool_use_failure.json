@@ -1,0 +1,1 @@
+{"session_id":"s1","prompt_id":"p1","transcript_path":"/tmp/t.jsonl","cwd":"/home/dev/proj","permission_mode":"default","effort":{"level":"medium"},"hook_event_name":"PostToolUseFailure","tool_name":"Read","tool_input":{"file_path":"/nope.txt"},"tool_use_id":"toolu_01","error":"File does not exist.","is_interrupt":false,"duration_ms":8}
