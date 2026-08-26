@@ -211,10 +211,15 @@ mod tests {
         // `cwd` comes from the hook payload, and the walk used to be unbounded:
         // 400k components cost 63 seconds in a hook that blocks the agent.
         let deep = PathBuf::from("/".to_string() + &"a/".repeat(200_000));
+
+        // Generous on purpose. The bug this guards took 22 seconds at this
+        // depth, and Windows needs a few hundred milliseconds just to walk
+        // paths this long. Five seconds separates "bounded" from "quadratic"
+        // without being sensitive to how fast the runner is.
         let started = std::time::Instant::now();
         let root = project_root(&deep);
         assert!(
-            started.elapsed().as_millis() < 500,
+            started.elapsed().as_secs() < 5,
             "took {:?}",
             started.elapsed()
         );
@@ -223,7 +228,7 @@ mod tests {
         let started = std::time::Instant::now();
         let _ = vcs_root(&deep);
         assert!(
-            started.elapsed().as_millis() < 500,
+            started.elapsed().as_secs() < 5,
             "vcs_root took {:?}",
             started.elapsed()
         );

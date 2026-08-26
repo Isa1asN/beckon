@@ -6,6 +6,8 @@
 
 use assert_cmd::Command;
 use beckon_cli::audio::{synth::Pcm, wav};
+// Only the gated decoder tests use `.not()`.
+#[cfg(feature = "embedded-audio")]
 use predicates::prelude::*;
 use predicates::str::contains;
 use std::path::PathBuf;
@@ -116,6 +118,8 @@ impl Env {
 
 // ── using your own files ──────────────────────────────────────────────────
 
+// Needs a decoder, which exists only with the embedded-audio feature.
+#[cfg(feature = "embedded-audio")]
 #[test]
 fn a_config_override_plays_your_file_through_the_hook() {
     let e = Env::new();
@@ -220,6 +224,8 @@ fn doctor_reports_a_broken_override_rather_than_going_quiet() {
         .stdout(contains("BROKEN"));
 }
 
+// Needs a decoder, which exists only with the embedded-audio feature.
+#[cfg(feature = "embedded-audio")]
 #[test]
 fn a_pack_sample_that_lives_inside_the_pack_plays() {
     let e = Env::new();
@@ -426,6 +432,8 @@ fn setting_a_sound_to_something_unreadable_is_refused() {
     );
 }
 
+// Needs a decoder, which exists only with the embedded-audio feature.
+#[cfg(feature = "embedded-audio")]
 #[test]
 fn setting_a_sound_to_a_real_file_works_and_reads_back() {
     let e = Env::new();

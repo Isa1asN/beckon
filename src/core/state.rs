@@ -710,7 +710,15 @@ mod tests {
 
     #[test]
     fn an_unwritable_home_degrades_silently_instead_of_panicking() {
-        let p = Paths::resolve_with(Some(Path::new("/proc/nonexistent/beckon")));
+        // A directory cannot be created *underneath a regular file* on any
+        // platform, which makes this the same test everywhere. `/proc/...` only
+        // works as an unwritable path on Linux — on Windows it is an ordinary
+        // relative path and the write simply succeeded.
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("not-a-directory");
+        std::fs::write(&blocker, b"").unwrap();
+
+        let p = Paths::resolve_with(Some(&blocker.join("beckon")));
         record_turn_start(&p, "s", Utc::now());
         record_played(&p, "s", State::Done, Utc::now());
         write_mute(&p, Utc::now());
