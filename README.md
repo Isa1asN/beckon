@@ -23,7 +23,7 @@ whether to get up.
 Not yet published to crates.io. Build from source:
 
 ```bash
-git clone https://github.com/esayas-beshah/beckon && cd beckon
+git clone https://github.com/Isa1asN/beckon && cd beckon
 cargo install --path .    # installs `beckon` to ~/.cargo/bin
 beckon init               # binds the hooks — shows a diff and asks first
 beckon test               # hear the active pack
@@ -178,14 +178,34 @@ a pack's samples must resolve inside the pack after symlinks are followed.
 - [ ] Adapters for Codex, Cursor, Gemini
 - [ ] npm and Homebrew distribution
 
-## Building
+## Contributing
 
 ```bash
+git clone https://github.com/Isa1asN/beckon && cd beckon
 ./scripts/install-hooks.sh   # pre-commit: fmt + clippy
-./check.sh --release         # fmt, clippy -D warnings, tests, release safety
+./check.sh --release         # everything CI enforces
 ```
 
-Design notes: [docs/DESIGN.md](docs/DESIGN.md).
+`main` requires a pull request and **signed commits**. If you don't already
+sign, GitHub will reject the push without much explanation:
+
+```bash
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+git config --global commit.gpgsign true
+```
+
+Then add the same key to GitHub under Settings → SSH and GPG keys with key type
+**Signing Key** — an authentication key does not count, and that catches most
+people out.
+
+CI runs fmt, clippy with `-D warnings`, the suite on Linux/macOS/Windows, a
+build with no audio backend, an MSRV check, the release-binary safety script,
+and crates.io packaging. `./check.sh --release` covers everything except the
+other two platforms.
+
+New sound packs are welcome — a pack is a TOML file, so a pull request adding
+one is reviewable as a diff. Design notes: [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Licence
 
