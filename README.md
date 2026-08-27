@@ -1,6 +1,7 @@
 # beckon
 
 [![CI](https://github.com/Isa1asN/beckon/actions/workflows/ci.yml/badge.svg)](https://github.com/Isa1asN/beckon/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/beckon-cli.svg)](https://crates.io/crates/beckon-cli)
 
 Distinct sounds for your AI coding agent, so you don't have to watch the
 terminal.
@@ -20,14 +21,13 @@ whether to get up.
 
 ## Install
 
-Not yet published to crates.io. Build from source:
-
 ```bash
-git clone https://github.com/Isa1asN/beckon && cd beckon
-cargo install --path .    # installs `beckon` to ~/.cargo/bin
-beckon init               # binds the hooks — shows a diff and asks first
-beckon test               # hear the active pack
+cargo install beckon-cli   # the binary is called `beckon`
+beckon init                # binds the hooks — shows a diff and asks first
+beckon test                # hear the active pack
 ```
+
+Or from source: `git clone https://github.com/Isa1asN/beckon && cd beckon && cargo install --path .`
 
 `init` prints the exact change it will make to `~/.claude/settings.json`, copies
 the file to `settings.json.beckon-backup-<timestamp>` beside itself, and only
@@ -170,7 +170,7 @@ a pack's samples must resolve inside the pack after symlinks are followed.
 
 ## Roadmap
 
-- [ ] Publish to crates.io
+- [x] Publish to crates.io
 - [ ] Hear it on macOS and Windows (CI builds and tests there already)
 - [ ] `beckon install github:user/repo` — packs from git
 - [ ] A browsable community pack index
