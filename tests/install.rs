@@ -64,6 +64,14 @@ impl Env {
     }
 }
 
+/// The program part of a hook command, unquoted.
+fn program_of(command: &str) -> &str {
+    match command.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(rest),
+        None => command.split_whitespace().next().unwrap_or(command),
+    }
+}
+
 fn commands_for(settings: &Value, event: &str) -> Vec<String> {
     settings["hooks"][event]
         .as_array()
@@ -114,7 +122,7 @@ fn init_writes_an_absolute_command_so_a_minimal_path_still_works() {
     e.beckon().args(["init", "--yes"]).assert().code(0);
     let command = commands_for(&e.read_settings(), "Stop")[0].clone();
     assert!(
-        command.starts_with('/') || command.starts_with('"'),
+        std::path::Path::new(program_of(&command)).is_absolute(),
         "not absolute: {command}"
     );
 }

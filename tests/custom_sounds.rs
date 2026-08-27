@@ -12,6 +12,15 @@ use predicates::prelude::*;
 use predicates::str::contains;
 use std::path::PathBuf;
 
+/// A path as a JSON string, properly escaped.
+///
+/// Interpolating a Windows path straight into JSON yields `"D:\a\..."`, and
+/// `\a` is not a valid JSON escape — the payload never parses, so every test
+/// silently exercises the "unparseable" branch instead of what it meant to.
+fn jpath(p: &std::path::Path) -> String {
+    serde_json::to_string(&p.to_string_lossy()).expect("path is representable as JSON")
+}
+
 struct Env {
     home: tempfile::TempDir,
     project: tempfile::TempDir,
@@ -72,8 +81,8 @@ impl Env {
             .env("BECKON_AUDIO", "null")
             .env("BECKON_TRACE", &trace)
             .write_stdin(format!(
-                r#"{{"session_id":"s","cwd":"{}",{event}}}"#,
-                self.project.path().display()
+                r#"{{"session_id":"s","cwd":{},{event}}}"#,
+                jpath(self.project.path())
             ))
             .assert()
             .code(0)
@@ -96,6 +105,8 @@ impl Env {
 
     /// A pack directory the user "installed", with a chosen sample reference.
     fn install_pack(&self, sample_field: &str) -> PathBuf {
+        // Quoted through Debug so a Windows path's backslashes survive TOML.
+        let sample_field = format!("{sample_field:?}");
         let dir = self.home.path().join("data/packs/mine");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -105,7 +116,7 @@ impl Env {
                  license=\"CC0-1.0\"\n\
                  [sounds.done]\ntype=\"synth\"\n\
                  [[sounds.done.layer]]\nwave=\"sine\"\nnotes=[440.0]\n\
-                 [sounds.needs-you]\ntype=\"sample\"\nfile=\"{sample_field}\"\n\
+                 [sounds.needs-you]\ntype=\"sample\"\nfile={sample_field}\n\
                  license=\"CC0-1.0\"\n\
                  [sounds.failed]\ntype=\"synth\"\n\
                  [[sounds.failed.layer]]\nwave=\"saw\"\nnotes=[220.0]\n"

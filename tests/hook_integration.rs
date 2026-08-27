@@ -5,6 +5,15 @@
 
 use assert_cmd::Command;
 
+/// A path as a JSON string, properly escaped.
+///
+/// Interpolating a Windows path straight into JSON yields `"D:\a\..."`, and
+/// `\a` is not a valid JSON escape — the payload never parses, so every test
+/// silently exercises the "unparseable" branch instead of what it meant to.
+fn jpath(p: &std::path::Path) -> String {
+    serde_json::to_string(&p.to_string_lossy()).expect("path is representable as JSON")
+}
+
 struct Env {
     home: tempfile::TempDir,
     project: tempfile::TempDir,
@@ -46,8 +55,8 @@ impl Env {
 
     fn event_for(&self, session: &str, body: &str) -> String {
         format!(
-            r#"{{"session_id":"{session}","cwd":"{}",{body}}}"#,
-            self.project.path().display()
+            r#"{{"session_id":"{session}","cwd":{},{body}}}"#,
+            jpath(self.project.path())
         )
     }
 
@@ -178,8 +187,8 @@ fn parallel_sessions_keep_independent_turn_timers() {
     let e = Env::new();
     // s2 starts a turn; s1 has no record and must fail open.
     e.hook(&format!(
-        r#"{{"session_id":"s2","cwd":"{}","hook_event_name":"UserPromptSubmit"}}"#,
-        e.project.path().display()
+        r#"{{"session_id":"s2","cwd":{},"hook_event_name":"UserPromptSubmit"}}"#,
+        jpath(e.project.path())
     ));
     e.hook(&e.stop());
     assert!(
@@ -333,8 +342,8 @@ fn a_project_config_applies_from_a_subdirectory() {
         .env("BECKON_HOME", e.home.path())
         .env("BECKON_TRACE", &e.trace)
         .write_stdin(format!(
-            r#"{{"session_id":"s1","cwd":"{}","hook_event_name":"Stop"}}"#,
-            deep.display()
+            r#"{{"session_id":"s1","cwd":{},"hook_event_name":"Stop"}}"#,
+            jpath(&deep)
         ))
         .assert()
         .code(0);

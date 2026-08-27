@@ -7,6 +7,15 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use predicates::str::contains;
 
+/// A path as a JSON string, properly escaped.
+///
+/// Interpolating a Windows path straight into JSON yields `"D:\a\..."`, and
+/// `\a` is not a valid JSON escape — the payload never parses, so every test
+/// silently exercises the "unparseable" branch instead of what it meant to.
+fn jpath(p: &std::path::Path) -> String {
+    serde_json::to_string(&p.to_string_lossy()).expect("path is representable as JSON")
+}
+
 fn beckon(home: &tempfile::TempDir) -> Command {
     let mut c = Command::cargo_bin("beckon").unwrap();
     c.env("BECKON_HOME", home.path())
@@ -320,8 +329,8 @@ fn a_mute_actually_suppresses_a_hook() {
             .env("BECKON_AUDIO", "null")
             .env("BECKON_TRACE", trace)
             .write_stdin(format!(
-                r#"{{"session_id":"s","cwd":"{}","hook_event_name":"Notification","notification_type":"permission_prompt"}}"#,
-                project.path().display()
+                r#"{{"session_id":"s","cwd":{},"hook_event_name":"Notification","notification_type":"permission_prompt"}}"#,
+                jpath(project.path())
             ))
             .assert()
             .code(0);
@@ -409,8 +418,8 @@ fn config_set_takes_effect_in_the_hook() {
     let project = tempfile::tempdir().unwrap();
     let trace = h.path().join("trace.log");
     let payload = format!(
-        r#"{{"session_id":"s","cwd":"{}","hook_event_name":"PostToolUseFailure","tool_name":"Bash"}}"#,
-        project.path().display()
+        r#"{{"session_id":"s","cwd":{},"hook_event_name":"PostToolUseFailure","tool_name":"Bash"}}"#,
+        jpath(project.path())
     );
     let fire = || {
         Command::cargo_bin("beckon")

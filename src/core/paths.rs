@@ -223,7 +223,10 @@ mod tests {
             "took {:?}",
             started.elapsed()
         );
-        assert!(root.is_absolute());
+        // Not `is_absolute`: a rooted path with no drive letter is not
+        // absolute on Windows. With no marker anywhere, the contract is
+        // that the starting directory comes back.
+        assert_eq!(root, deep);
 
         let started = std::time::Instant::now();
         let _ = vcs_root(&deep);
