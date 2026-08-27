@@ -183,13 +183,36 @@ fn resolve(options: &Options) -> Option<(Box<dyn Adapter>, PathBuf)> {
 /// a hook that silently fails to resolve is indistinguishable from a broken one.
 fn invocation() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
-    let exe = exe.canonicalize().unwrap_or(exe);
+    let exe = simplify(exe.canonicalize().unwrap_or(exe));
     let path = exe.display().to_string();
     Some(if path.contains(char::is_whitespace) {
         format!("\"{path}\" hook claude-code")
     } else {
         format!("{path} hook claude-code")
     })
+}
+
+/// Undo the extended-length prefix `canonicalize` adds on Windows.
+///
+/// `canonicalize` returns `\\?\D:\path\beckon.exe`. That form is valid for
+/// `CreateProcess` but many shells and launchers cannot run it, and this string
+/// is handed to the agent to execute — so a hook written on Windows could
+/// simply never fire. Ordinary drive paths are stripped back to `D:\path`;
+/// genuine UNC paths (`\\?\UNC\server\share`) are left alone, since they have
+/// no shorter form.
+#[cfg(windows)]
+fn simplify(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+/// Nothing to undo: `canonicalize` returns a plain absolute path on unix.
+#[cfg(not(windows))]
+fn simplify(path: PathBuf) -> PathBuf {
+    path
 }
 
 /// Read and parse.
@@ -413,4 +436,40 @@ fn write_settings(path: &Path, value: &Value) -> std::io::Result<()> {
         return Err(e);
     }
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_extended_length_prefix_is_stripped() {
+        // This string is executed by the agent. `canonicalize` produces the
+        // `\\?\` form, which many launchers cannot run — a hook written on
+        // Windows would then never fire.
+        assert_eq!(
+            simplify(PathBuf::from(r"\\?\D:\tools\beckon.exe")),
+            PathBuf::from(r"D:\tools\beckon.exe")
+        );
+    }
+
+    #[test]
+    fn a_genuine_unc_path_is_left_alone() {
+        // `\\?\UNC\server\share` has no shorter equivalent.
+        let unc = PathBuf::from(r"\\?\UNC\server\share\beckon.exe");
+        assert_eq!(simplify(unc.clone()), unc);
+    }
+
+    #[test]
+    fn an_ordinary_path_is_unchanged() {
+        let plain = PathBuf::from(r"D:\tools\beckon.exe");
+        assert_eq!(simplify(plain.clone()), plain);
+    }
+
+    #[test]
+    fn the_invocation_never_carries_an_extended_prefix() {
+        let command = invocation().expect("current_exe is available under test");
+        assert!(!command.contains(r"\\?\"), "unrunnable command: {command}");
+        assert!(command.ends_with("hook claude-code"), "{command}");
+    }
 }

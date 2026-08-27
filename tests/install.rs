@@ -190,7 +190,8 @@ fn a_dry_run_writes_nothing() {
         .assert()
         .code(0)
         .stdout(contains("Dry run"))
-        .stdout(contains("beckon hook claude-code"));
+        // Not "beckon hook …": the program is `beckon.exe` on Windows.
+        .stdout(contains("hook claude-code"));
 
     assert_eq!(std::fs::read_to_string(e.settings_path()).unwrap(), FOREIGN);
     assert!(e.backups().is_empty());
