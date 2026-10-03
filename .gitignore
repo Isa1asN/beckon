@@ -4,6 +4,9 @@
 # Written by `cargo run --example render_packs` when given no output directory
 /beckon-sounds
 
+# Working files from /brag (the demo video's source; the result lives in docs/assets)
+/brag-output/
+
 # npm distribution wrapper
 /npm/node_modules/
 /npm/*.tgz

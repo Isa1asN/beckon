@@ -6,6 +6,11 @@
 Distinct sounds for your AI coding agent, so you don't have to watch the
 terminal.
 
+[![beckon: a different sound for done, needs you, failed and rate-limited](docs/assets/beckon-demo.jpg)](docs/assets/beckon-demo.mp4)
+
+<sub>The 22-second demo above (click to play; turn the sound on). Every beckon
+sound in it is real output, rendered from the built-in packs.</sub>
+
 beckon binds to your agent's lifecycle hooks and plays a different sound
 depending on what it needs:
 
