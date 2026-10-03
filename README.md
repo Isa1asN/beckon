@@ -1,3 +1,4 @@
+
 # beckon
 
 [![CI](https://github.com/Isa1asN/beckon/actions/workflows/ci.yml/badge.svg)](https://github.com/Isa1asN/beckon/actions/workflows/ci.yml)
@@ -6,9 +7,9 @@
 Distinct sounds for your AI coding agent, so you don't have to watch the
 terminal.
 
-[![beckon: a different sound for done, needs you, failed and rate-limited](docs/assets/beckon-demo.jpg)](docs/assets/beckon-demo.mp4)
+https://github.com/user-attachments/assets/fcff4d3d-9270-469c-9a30-b285e03c8064
 
-<sub>The 22-second demo above (click to play; turn the sound on). Every beckon
+<sub>The 22-second demo above (turn the sound on). Every beckon
 sound in it is real output, rendered from the built-in packs.</sub>
 
 beckon binds to your agent's lifecycle hooks and plays a different sound
