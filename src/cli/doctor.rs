@@ -385,7 +385,12 @@ fn locate(program: &str) -> Located {
         };
     }
     if program.contains(std::path::is_separator) {
-        return Located::Unknown("a relative path, resolved wherever the agent runs it");
+        // Rooted but not absolute only happens on Windows: `/tools/beckon`.
+        return Located::Unknown(if expanded.has_root() {
+            "a path with no drive, resolved on whichever drive the agent runs from"
+        } else {
+            "a relative path, resolved wherever the agent runs it"
+        });
     }
     match which(program) {
         Some(found) => Located::Found(PathBuf::from(found)),

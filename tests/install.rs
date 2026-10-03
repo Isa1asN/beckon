@@ -654,13 +654,35 @@ fn doctor_names_the_events_a_partial_install_is_missing() {
 fn doctor_flags_a_hook_whose_beckon_no_longer_exists() {
     // Uninstalled or moved binary: every hook fails and every sound is lost,
     // which is the silence that is hardest to diagnose from the outside.
+    // Absolute on every platform: `/nowhere/...` has no drive on Windows, so
+    // it is not absolute there and doctor rightly declines to guess.
     let e = Env::new();
+    let gone = e._home.path().join("uninstalled").join("beckon");
+    let command = format!("\"{}\" hook claude-code", gone.display());
     e.write_settings(
-        r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/nowhere/at/all/beckon hook claude-code"}]}]}}"#,
+        &serde_json::json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command}]}]}})
+            .to_string(),
     );
     let report = e.doctor();
     assert!(report.contains("1 of 9 bound"), "{report}");
     assert!(report.contains("NOT FOUND"), "{report}");
+}
+
+#[cfg(windows)]
+#[test]
+fn doctor_does_not_call_a_driveless_windows_path_missing() {
+    // `/tools/beckon` lands on whichever drive the agent runs from, or under
+    // Git Bash's root — not knowable from here, and not the same as missing.
+    let e = Env::new();
+    e.write_settings(
+        r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/tools/beckon hook claude-code"}]}]}}"#,
+    );
+    let report = e.doctor();
+    assert!(
+        report.contains("cannot tell from here: a path with no drive"),
+        "{report}"
+    );
+    assert!(!report.contains("NOT FOUND"), "{report}");
 }
 
 #[cfg(unix)]
