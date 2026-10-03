@@ -80,6 +80,8 @@ impl Env {
             .env("BECKON_HOME", self.home.path())
             .env("BECKON_AUDIO", "null")
             .env("BECKON_TRACE", &trace)
+            .env_remove("SSH_CONNECTION")
+            .env_remove("SSH_TTY")
             .write_stdin(format!(
                 r#"{{"session_id":"s","cwd":{},{event}}}"#,
                 jpath(self.project.path())

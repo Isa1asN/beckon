@@ -11,5 +11,6 @@ pub mod cli;
 pub mod core;
 pub mod guard;
 pub mod pack;
+pub mod remote;
 pub mod settings_json;
 pub mod trace;

@@ -92,6 +92,29 @@ pub enum Sequence {
     Osc777,
 }
 
+impl RemoteMode {
+    /// The config spelling, as serde reads it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RemoteMode::Auto => "auto",
+            RemoteMode::Off => "off",
+            RemoteMode::Always => "always",
+            RemoteMode::Both => "both",
+        }
+    }
+}
+
+impl Sequence {
+    /// The config spelling, as serde reads it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Sequence::Bel => "bel",
+            Sequence::Osc9 => "osc9",
+            Sequence::Osc777 => "osc777",
+        }
+    }
+}
+
 // ------------------------------------------------------------------- behaviour
 
 impl Default for Config {
@@ -659,6 +682,23 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn remote_spellings_are_exactly_what_serde_reads() {
+        for mode in [
+            RemoteMode::Auto,
+            RemoteMode::Off,
+            RemoteMode::Always,
+            RemoteMode::Both,
+        ] {
+            let back: RemoteMode = serde_json::from_str(&format!("\"{}\"", mode.as_str())).unwrap();
+            assert_eq!(back, mode);
+        }
+        for seq in [Sequence::Bel, Sequence::Osc9, Sequence::Osc777] {
+            let back: Sequence = serde_json::from_str(&format!("\"{}\"", seq.as_str())).unwrap();
+            assert_eq!(back, seq);
+        }
     }
 
     #[test]

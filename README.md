@@ -81,7 +81,11 @@ beckon uninstall
 
 By default beckon:
 
-- says nothing when a turn finished in under 30 seconds — you were still watching
+- says nothing when a turn finished within 30 seconds of your prompt — you were
+  still watching. A background task reporting back doesn't count as you
+  prompting, so work you walked away from still chimes when it wraps up
+- doesn't chime `done` twice within 30 seconds unless you've prompted in
+  between — the first one already told you
 - always plays a blocking alert, however fast it arrived, because a permission
   prompt stalls progress
 - doesn't repeat the same sound for the same session within 1.5 seconds
@@ -90,7 +94,9 @@ By default beckon:
 - ignores a tool you interrupted yourself
 - caps concurrent sounds at 8
 
-If it's quiet and you didn't ask it to be, `beckon doctor` says why.
+If it's quiet and you didn't ask it to be, `beckon doctor` says why — including
+which beckon binary your hooks actually run, so a stale build left on `PATH`
+can't hide.
 
 ## Several agents at once
 
@@ -101,6 +107,23 @@ with `beckon config set identity.per_project false`.
 
 Rate limiting is scoped per session and per state. A machine-wide throttle would
 let one agent's completion chime swallow another's permission alert.
+
+## Over SSH
+
+When the agent runs on a remote machine, its speakers reach nobody. Under SSH
+beckon instead hands the agent an escape sequence to draw in your terminal — a
+bell, and an OSC 9 desktop notification such as `Needs you — go unblock it ·
+api-server`. Nothing to configure; it switches on when `SSH_CONNECTION` or
+`SSH_TTY` is set.
+
+```bash
+beckon test --state done              # over SSH: sends it to your terminal
+beckon config set remote.mode both    # auto (default) · off · always · both
+beckon config set remote.sequences "bel, osc777"
+```
+
+You lose the distinct sounds, and whether a notification appears is up to your
+terminal; the bell almost always works. `beckon test` shows you which you get.
 
 ## Packs
 
@@ -180,7 +203,7 @@ a pack's samples must resolve inside the pack after symlinks are followed.
 - [ ] Hear it on macOS and Windows (CI builds and tests there already)
 - [ ] `beckon install github:user/repo` — packs from git
 - [ ] A browsable community pack index
-- [ ] SSH: escape sequences so a remote agent alerts your local terminal
+- [x] SSH: escape sequences so a remote agent alerts your local terminal
 - [ ] Adapters for Codex, Cursor, Gemini
 - [ ] npm and Homebrew distribution
 

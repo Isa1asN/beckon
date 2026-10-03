@@ -327,6 +327,8 @@ fn a_mute_actually_suppresses_a_hook() {
             .args(["hook", "claude-code"])
             .env("BECKON_HOME", h.path())
             .env("BECKON_AUDIO", "null")
+            .env_remove("SSH_CONNECTION")
+            .env_remove("SSH_TTY")
             .env("BECKON_TRACE", trace)
             .write_stdin(format!(
                 r#"{{"session_id":"s","cwd":{},"hook_event_name":"Notification","notification_type":"permission_prompt"}}"#,
@@ -427,6 +429,8 @@ fn config_set_takes_effect_in_the_hook() {
             .args(["hook", "claude-code"])
             .env("BECKON_HOME", h.path())
             .env("BECKON_AUDIO", "null")
+            .env_remove("SSH_CONNECTION")
+            .env_remove("SSH_TTY")
             .env("BECKON_TRACE", &trace)
             .write_stdin(payload.clone())
             .assert()

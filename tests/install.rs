@@ -601,3 +601,181 @@ fn a_symlinked_settings_file_stays_a_symlink() {
         );
     }
 }
+
+// ------------------------------------------------------------------- doctor
+
+impl Env {
+    /// `doctor`'s output, run from outside any repository so only the
+    /// user-scope file this test controls can be reported.
+    fn doctor(&self) -> String {
+        let out = self
+            .beckon()
+            .arg("doctor")
+            .current_dir(self._home.path())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        String::from_utf8(out.stdout).unwrap()
+    }
+}
+
+#[test]
+fn doctor_says_hooks_are_unbound_only_when_they_are() {
+    // It used to say "run `beckon init`" unconditionally — before and after.
+    let e = Env::new();
+    e.write_settings(FOREIGN);
+    assert!(e
+        .doctor()
+        .contains("hooks     not bound — run `beckon init`"));
+
+    e.beckon().args(["init", "--yes"]).assert().code(0);
+    let report = e.doctor();
+    assert!(report.contains("hooks     all 9 bound in"), "{report}");
+    assert!(report.contains("this binary"), "{report}");
+    assert!(!report.contains("not bound"), "{report}");
+}
+
+#[test]
+fn doctor_names_the_events_a_partial_install_is_missing() {
+    let e = Env::new();
+    e.beckon().args(["init", "--yes"]).assert().code(0);
+    let mut settings = e.read_settings();
+    let hooks = settings["hooks"].as_object_mut().unwrap();
+    hooks.remove("Stop");
+    hooks.remove("PreCompact");
+    e.write_settings(&settings.to_string());
+
+    let report = e.doctor();
+    assert!(report.contains("7 of 9 bound"), "{report}");
+    assert!(report.contains("missing Stop, PreCompact"), "{report}");
+}
+
+#[test]
+fn doctor_flags_a_hook_whose_beckon_no_longer_exists() {
+    // Uninstalled or moved binary: every hook fails and every sound is lost,
+    // which is the silence that is hardest to diagnose from the outside.
+    let e = Env::new();
+    e.write_settings(
+        r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/nowhere/at/all/beckon hook claude-code"}]}]}}"#,
+    );
+    let report = e.doctor();
+    assert!(report.contains("1 of 9 bound"), "{report}");
+    assert!(report.contains("NOT FOUND"), "{report}");
+}
+
+#[cfg(unix)]
+fn executable(path: &std::path::Path, script: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, script).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn doctor_does_not_guess_at_paths_only_the_hook_shell_can_resolve() {
+    // A wrong "NOT FOUND" sends someone chasing a hook that works.
+    let e = Env::new();
+    e.write_settings(
+        r#"{"hooks":{
+            "Stop":[{"hooks":[{"type":"command","command":"$HOME/bin/beckon hook claude-code"}]}],
+            "Notification":[{"hooks":[{"type":"command","command":"./beckon hook claude-code"}]}]
+        }}"#,
+    );
+    let report = e.doctor();
+    assert!(
+        report.contains("cannot tell from here: it uses shell expansion"),
+        "{report}"
+    );
+    assert!(
+        report.contains("cannot tell from here: a relative path"),
+        "{report}"
+    );
+    assert!(!report.contains("NOT FOUND"), "{report}");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_expands_a_tilde_path_as_the_hook_shell_would() {
+    let e = Env::new();
+    let home = tempfile::tempdir().unwrap();
+    let ours = assert_cmd::cargo::cargo_bin("beckon");
+    std::fs::create_dir_all(home.path().join("bin")).unwrap();
+    std::os::unix::fs::symlink(&ours, home.path().join("bin/beckon")).unwrap();
+    e.write_settings(
+        r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"~/bin/beckon hook claude-code"}]}]}}"#,
+    );
+    let out = e
+        .beckon()
+        .arg("doctor")
+        .env("HOME", home.path())
+        .current_dir(e._home.path())
+        .output()
+        .unwrap();
+    let report = String::from_utf8(out.stdout).unwrap();
+    assert!(report.contains("this binary"), "{report}");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_never_runs_a_program_named_by_a_repositorys_settings() {
+    // A cloned repository can commit .claude/settings.json. Claude Code will
+    // not run its hooks until the workspace is trusted; doctor must not run
+    // them at all.
+    let e = Env::new();
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir(repo.path().join(".git")).unwrap();
+    let marker = repo.path().join("ran");
+    let fake = repo.path().join("tools/beckon");
+    executable(
+        &fake,
+        &format!(
+            "#!/bin/sh\ntouch '{}'\necho beckon 9.9.9\n",
+            marker.display()
+        ),
+    );
+    std::fs::create_dir(repo.path().join(".claude")).unwrap();
+    std::fs::write(
+        repo.path().join(".claude/settings.json"),
+        format!(
+            r#"{{"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":"{} hook claude-code"}}]}}]}}}}"#,
+            fake.display()
+        ),
+    )
+    .unwrap();
+
+    let out = e
+        .beckon()
+        .arg("doctor")
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    let report = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        !marker.exists(),
+        "doctor executed the repository's program:\n{report}"
+    );
+    assert!(report.contains("not run to ask its version"), "{report}");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_gives_up_on_a_wrapper_that_never_closes_its_output() {
+    // The wrapper exits at once, but leaves a child holding stdout open. A
+    // read waiting for end of output would hang doctor for as long as it runs.
+    let e = Env::new();
+    let dir = tempfile::tempdir().unwrap();
+    let fake = dir.path().join("beckon");
+    executable(&fake, "#!/bin/sh\nsleep 30 &\nexit 0\n");
+    e.write_settings(&format!(
+        r#"{{"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":"{} hook claude-code"}}]}}]}}}}"#,
+        fake.display()
+    ));
+    let started = std::time::Instant::now();
+    let report = e.doctor();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "doctor took {:?}",
+        started.elapsed()
+    );
+    assert!(report.contains("did not report a version"), "{report}");
+}

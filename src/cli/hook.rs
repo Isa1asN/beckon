@@ -11,6 +11,7 @@ use crate::core::identity;
 use crate::core::paths::{self, Paths};
 use crate::core::policy::{decide, Decision, PolicyInput};
 use crate::core::state;
+use crate::remote;
 use crate::trace::trace;
 use chrono::{Local, Utc};
 use std::io::Read;
@@ -44,6 +45,11 @@ pub fn run(agent: &str) {
             state::record_turn_start(&paths, &event.session_id, now);
             state::prune_older_than(&paths, now, SESSION_RETENTION_DAYS);
             trace("turn-start");
+            return;
+        }
+        Signal::Wakeup => {
+            // Deliberately leaves the turn timer alone: see `Signal::Wakeup`.
+            trace("wakeup");
             return;
         }
         Signal::SessionEnd => {
@@ -86,10 +92,64 @@ pub fn run(agent: &str) {
     match decision {
         Decision::Suppress(reason) => trace(&format!("suppress {reason}")),
         Decision::Play { state, volume } => {
+            let config = &loaded.config;
+            let route = remote::route(config.remote.mode, remote::ssh_detected());
+            // The terminal route can still be closed for this one alert.
+            let terminal_closed = if !route.terminal() {
+                None
+            } else if event.stdout_reaches_model {
+                // Such stdout is read as JSON first, but "first" is a parsing
+                // detail of one agent version. Not worth a prompt.
+                Some("this event's output reaches the model")
+            } else if config.remote.sequences.is_empty() {
+                Some("remote.sequences is empty")
+            } else {
+                None
+            };
+            let to_terminal = route.terminal() && terminal_closed.is_none();
+
+            if !route.local_audio() && !to_terminal {
+                // Reached nobody, so it is not recorded as played: a sound you
+                // never heard must not rate-limit or gate the next one.
+                let why = terminal_closed.unwrap_or("no route");
+                trace(&format!("dropped {state}: {why}, and no local audio here"));
+                return;
+            }
+
             state::record_played(&paths, &event.session_id, state, now);
             trace(&format!("play {state}"));
-            play(&loaded.config, &project_root, state, volume);
+            if route.local_audio() {
+                play(config, &project_root, state, volume);
+            } else {
+                trace("local audio skipped: remote");
+            }
+            if let Some(why) = terminal_closed {
+                trace(&format!("terminal skipped: {why}"));
+            } else if to_terminal {
+                send_to_terminal(config, &project_root, state);
+            }
         }
+    }
+}
+
+/// Hand the agent an escape sequence to write to your terminal.
+///
+/// The only thing this hook ever prints. It is the agent's JSON hook output,
+/// so it must be one complete document or nothing — a partial one is read as
+/// a malformed reply, not ignored.
+fn send_to_terminal(config: &Config, project_root: &std::path::Path, state: State) {
+    let project = remote::project_label(project_root);
+    let Some(output) = remote::hook_output(&config.remote.sequences, state, &project) else {
+        return;
+    };
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    if stdout
+        .write_all(output.as_bytes())
+        .and_then(|()| stdout.flush())
+        .is_ok()
+    {
+        trace(&format!("terminal {state}"));
     }
 }
 

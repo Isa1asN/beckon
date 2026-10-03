@@ -69,6 +69,8 @@ fi
 
 echo "── release exit-0 guarantee (panic = abort) ────────"
 export BECKON_HOME=/nonexistent/beckon/home
+# Over SSH a played sound is JSON on stdout by design; this checks the local path.
+unset SSH_CONNECTION SSH_TTY
 
 pipe_check "empty stdin"          ''
 pipe_check "not json"             'garbage'

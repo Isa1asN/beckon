@@ -115,14 +115,14 @@ fn get_value(config: &Config, key: &str) -> Option<String> {
             QuietAction::Volume(v) => format!("\"volume:{v}\""),
         },
         "identity.per_project" => config.identity.per_project.to_string(),
-        "remote.mode" => format!("{:?}", format!("{:?}", config.remote.mode).to_lowercase()),
+        "remote.mode" => format!("{:?}", config.remote.mode.as_str()),
         "remote.sequences" => format!(
             "[{}]",
             config
                 .remote
                 .sequences
                 .iter()
-                .map(|s| format!("{:?}", format!("{s:?}").to_lowercase()))
+                .map(|s| format!("{:?}", s.as_str()))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),

@@ -10,7 +10,10 @@ use assert_cmd::Command;
 fn hook() -> Command {
     let mut c = Command::cargo_bin("beckon").unwrap();
     c.args(["hook", "claude-code"])
-        .env("BECKON_HOME", "/nonexistent/beckon/home");
+        .env("BECKON_HOME", "/nonexistent/beckon/home")
+        // Over SSH a played sound becomes JSON on stdout, by design.
+        .env_remove("SSH_CONNECTION")
+        .env_remove("SSH_TTY");
     c
 }
 

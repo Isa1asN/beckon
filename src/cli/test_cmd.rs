@@ -8,6 +8,7 @@ use crate::core::identity;
 use crate::core::paths::{self, Paths};
 use crate::pack::resolve::{resolve_with_overrides, Source};
 use crate::pack::store;
+use crate::remote;
 
 /// Gap between sounds, so a run of nine is legible rather than a smear.
 const GAP: std::time::Duration = std::time::Duration::from_millis(450);
@@ -48,6 +49,10 @@ pub fn run(pack_id: Option<String>, only: Option<State>, here: bool) -> i32 {
     }
     println!();
 
+    // Over SSH the remote speakers reach nobody; what reaches you is this
+    // terminal, so that is what gets tested.
+    let route = remote::route(config.remote.mode, remote::ssh_detected());
+
     let states: Vec<State> = match only {
         Some(state) => vec![state],
         None => State::ALL.to_vec(),
@@ -73,6 +78,9 @@ pub fn run(pack_id: Option<String>, only: Option<State>, here: bool) -> i32 {
 
         println!("  {state:<14} {:>6.0}ms{origin}", pcm.duration_ms());
 
+        if !route.local_audio() {
+            continue;
+        }
         let backend = out::play(&pcm, config.volume);
         if backend == out::Backend::Null {
             continue;
@@ -81,5 +89,39 @@ pub fn run(pack_id: Option<String>, only: Option<State>, here: bool) -> i32 {
             std::thread::sleep(GAP);
         }
     }
+
+    if route.terminal() {
+        send_to_terminal(
+            &config,
+            &root,
+            only.unwrap_or(State::Done),
+            route.local_audio(),
+        );
+    }
     0
+}
+
+/// Write one alert's escape sequences straight to this terminal, as the agent
+/// would. Straight, because here nothing else is drawing on it.
+fn send_to_terminal(config: &Config, root: &std::path::Path, state: State, also_local: bool) {
+    use std::io::Write;
+    println!();
+    if config.remote.sequences.is_empty() {
+        println!("  terminal  nothing to send — remote.sequences is empty");
+        return;
+    }
+    println!(
+        "  terminal  sent `{state}` as {} — watch for it on the machine you are typing on{}",
+        remote::describe(&config.remote.sequences),
+        if also_local {
+            ""
+        } else {
+            " (no audio played here: remote)"
+        }
+    );
+    let project = remote::project_label(root);
+    let mut stdout = std::io::stdout().lock();
+    let _ =
+        stdout.write_all(remote::sequence(&config.remote.sequences, state, &project).as_bytes());
+    let _ = stdout.flush();
 }

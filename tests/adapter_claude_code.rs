@@ -35,6 +35,7 @@ fn mapping_table_is_implemented_exactly() {
         ("pre_compact", Signal::Sound(State::Compacting)),
         ("session_start", Signal::Sound(State::SessionStart)),
         ("user_prompt_submit", Signal::TurnStart),
+        ("user_prompt_submit_task_notification", Signal::Wakeup),
         ("session_end", Signal::SessionEnd),
         ("notification_auth_success", Signal::Ignore),
         ("post_tool_use_failure_interrupt", Signal::Ignore),
@@ -67,9 +68,7 @@ fn every_documented_stopfailure_error_type_is_classified() {
         "oauth_org_not_allowed",
     ];
     for e in rate_limited {
-        let p = payload(&format!(
-            r#""hook_event_name":"StopFailure","error_type":"{e}""#
-        ));
+        let p = payload(&format!(r#""hook_event_name":"StopFailure","error":"{e}""#));
         assert_eq!(
             ClaudeCode.parse(p.as_bytes()).unwrap().signal,
             Signal::Sound(State::RateLimited),
@@ -77,15 +76,74 @@ fn every_documented_stopfailure_error_type_is_classified() {
         );
     }
     for e in plain {
-        let p = payload(&format!(
-            r#""hook_event_name":"StopFailure","error_type":"{e}""#
-        ));
+        let p = payload(&format!(r#""hook_event_name":"StopFailure","error":"{e}""#));
         assert_eq!(
             ClaudeCode.parse(p.as_bytes()).unwrap().signal,
             Signal::Sound(State::Failed),
             "{e} should be a plain failure"
         );
     }
+}
+
+#[test]
+fn a_rate_limit_in_the_shape_claude_code_sends_is_rate_limited() {
+    // Regression: the kind arrives as a string under `error`, and only an
+    // `error` *object* used to be read — every rate limit played `failed`.
+    let p = payload(
+        r#""hook_event_name":"StopFailure","error":"rate_limit","error_details":"429","last_assistant_message":"x""#,
+    );
+    assert_eq!(
+        ClaudeCode.parse(p.as_bytes()).unwrap().signal,
+        Signal::Sound(State::RateLimited)
+    );
+}
+
+#[test]
+fn a_background_task_reporting_back_is_a_wakeup_not_a_turn_start() {
+    // Restarting the turn timer here gated the wrap-up turn as "too short"
+    // when the person had in fact been gone for as long as the task ran.
+    for prompt in [
+        "<task-notification>\n<task-id>t1</task-id>\n<status>failed</status>\n</task-notification>",
+        "  \n<task-notification><status>completed</status></task-notification>",
+    ] {
+        let body = format!(
+            r#""hook_event_name":"UserPromptSubmit","prompt":{}"#,
+            serde_json::to_string(prompt).unwrap()
+        );
+        assert_eq!(
+            ClaudeCode.parse(payload(&body).as_bytes()).unwrap().signal,
+            Signal::Wakeup,
+            "{prompt:?}"
+        );
+    }
+}
+
+#[test]
+fn a_person_quoting_the_tag_is_still_a_turn_start() {
+    // Only an opening tag marks the agent's own prompt. Someone pasting one
+    // mid-sentence, or a prompt with no text at all, is still a person.
+    for body in [
+        r#""hook_event_name":"UserPromptSubmit","prompt":"why did <task-notification> fire twice?""#,
+        r#""hook_event_name":"UserPromptSubmit","prompt":"""#,
+        r#""hook_event_name":"UserPromptSubmit""#,
+    ] {
+        assert_eq!(
+            ClaudeCode.parse(payload(body).as_bytes()).unwrap().signal,
+            Signal::TurnStart,
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_message_under_error_does_not_hide_the_kind_under_another_key() {
+    let p = payload(
+        r#""hook_event_name":"StopFailure","error":"API Error: 429 Too Many Requests","error_type":"rate_limit""#,
+    );
+    assert_eq!(
+        ClaudeCode.parse(p.as_bytes()).unwrap().signal,
+        Signal::Sound(State::RateLimited)
+    );
 }
 
 #[test]
@@ -99,7 +157,7 @@ fn stopfailure_degrades_to_failed_when_the_payload_shape_is_unknown() {
 
 #[test]
 fn stopfailure_discriminator_is_found_under_any_plausible_key() {
-    for key in ["error_type", "stop_failure_type", "reason", "type"] {
+    for key in ["error", "error_type", "stop_failure_type", "reason", "type"] {
         let p = payload(&format!(
             r#""hook_event_name":"StopFailure","{key}":"rate_limit""#
         ));
@@ -270,7 +328,7 @@ fn every_fixture_parses_and_no_fixture_is_unused() {
         .map(|e| e.file_name().to_string_lossy().replace(".json", ""))
         .collect();
     on_disk.sort();
-    assert_eq!(on_disk.len(), 17, "fixture count changed: {on_disk:?}");
+    assert_eq!(on_disk.len(), 18, "fixture count changed: {on_disk:?}");
     for name in &on_disk {
         assert!(
             ClaudeCode

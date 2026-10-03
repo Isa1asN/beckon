@@ -381,6 +381,39 @@ pub fn foreign_hooks(value: &Value) -> Vec<(String, String)> {
     found
 }
 
+/// Hook commands in this file that are recognisably beckon's, each with the
+/// events it is bound to, in file order. For `doctor`.
+///
+/// Loose matching, as for adding: an entry someone has edited still runs
+/// beckon, and is exactly what you want to see when asking why it is quiet.
+pub fn beckon_bindings(value: &Value) -> Vec<(String, Vec<String>)> {
+    let mut found: Vec<(String, Vec<String>)> = Vec::new();
+    let Some(hooks) = value.get("hooks").and_then(Value::as_object) else {
+        return found;
+    };
+
+    for (event, groups) in hooks {
+        for group in groups.as_array().into_iter().flatten() {
+            for command in group_commands(group).into_iter().flatten() {
+                if !looks_like_beckon(command) {
+                    continue;
+                }
+                match found.iter_mut().find(|(c, _)| c == command) {
+                    Some((_, events)) if !events.contains(event) => events.push(event.clone()),
+                    Some(_) => {}
+                    None => found.push((command.to_string(), vec![event.clone()])),
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The program a hook command runs, unquoted.
+pub fn program_of(command: &str) -> Option<&str> {
+    split_program(command).map(|(program, _)| program)
+}
+
 fn pretty(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
@@ -625,6 +658,60 @@ mod tests {
         assert!(commands.iter().any(|c| c.contains("notify-send")));
         assert!(commands.iter().any(|c| c.contains("guard.sh")));
         assert!(!commands.iter().any(|c| c.contains("beckon")));
+    }
+
+    #[test]
+    fn beckon_bindings_lists_each_of_our_commands_with_its_events() {
+        let installed = merge(&foreign(), &plan()).unwrap();
+        let bound = beckon_bindings(&installed);
+        assert_eq!(bound.len(), 1, "{bound:?}");
+        let (command, events) = &bound[0];
+        assert!(command.ends_with("hook claude-code"), "{command}");
+        assert_eq!(events.len(), plan().bindings.len(), "{events:?}");
+        assert!(
+            beckon_bindings(&foreign()).is_empty(),
+            "notify-send is not beckon"
+        );
+    }
+
+    #[test]
+    fn beckon_bindings_keeps_an_edited_entry_and_a_second_copy_apart() {
+        // Both still run a beckon, so both are what `doctor` must show.
+        let settings = json!({"hooks": {
+            "Stop": [{"hooks": [
+                {"type": "command", "command": "/old/beckon hook claude-code"},
+                {"type": "command", "command": "/new/beckon hook claude-code --x"}
+            ]}],
+            "Notification": [{"hooks": [
+                {"type": "command", "command": "/old/beckon hook claude-code"}
+            ]}]
+        }});
+        let bound = beckon_bindings(&settings);
+        assert_eq!(
+            bound,
+            vec![
+                (
+                    "/old/beckon hook claude-code".to_string(),
+                    vec!["Stop".to_string(), "Notification".to_string()]
+                ),
+                (
+                    "/new/beckon hook claude-code --x".to_string(),
+                    vec!["Stop".to_string()]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn program_of_honours_a_quoted_path() {
+        assert_eq!(
+            program_of("\"/opt/my apps/beckon\" hook claude-code"),
+            Some("/opt/my apps/beckon")
+        );
+        assert_eq!(
+            program_of("/usr/bin/beckon hook claude-code"),
+            Some("/usr/bin/beckon")
+        );
     }
 
     #[test]

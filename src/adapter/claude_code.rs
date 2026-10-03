@@ -112,7 +112,13 @@ impl Adapter for ClaudeCode {
             "PreCompact" => Signal::Sound(State::Compacting),
             "SessionStart" => Signal::Sound(State::SessionStart),
 
-            "UserPromptSubmit" => Signal::TurnStart,
+            "UserPromptSubmit" => {
+                if string_at(obj, "prompt").is_some_and(is_machine_prompt) {
+                    Signal::Wakeup
+                } else {
+                    Signal::TurnStart
+                }
+            }
             "SessionEnd" => Signal::SessionEnd,
 
             _ => Signal::Ignore,
@@ -137,8 +143,30 @@ impl Adapter for ClaudeCode {
             },
             project,
             agent: "claude-code",
+            // Per the hook docs: prompt text and session-start output become
+            // context, and pre-compact output becomes compaction instructions.
+            stdout_reaches_model: matches!(
+                hook,
+                "UserPromptSubmit" | "SessionStart" | "PreCompact"
+            ),
         })
     }
+}
+
+/// Openings of prompts that Claude Code writes itself, not the person at the
+/// keyboard.
+///
+/// `UserPromptSubmit` fires for these too, and its payload carries no origin
+/// field — only the text — so the text is what we classify. Treating one as a
+/// turn start restarts the duration gate the moment a background job reports
+/// back: walk away for an hour, the agent wraps up in twenty seconds, and the
+/// gate decides you were watching. Replayed over real sessions, that silenced
+/// roughly one `done` in sixteen, every one of them after the person had left.
+const MACHINE_PROMPTS: [&str; 1] = ["<task-notification>"];
+
+fn is_machine_prompt(prompt: &str) -> bool {
+    let prompt = prompt.trim_start();
+    MACHINE_PROMPTS.iter().any(|tag| prompt.starts_with(tag))
 }
 
 enum ErrorClass {
@@ -147,13 +175,14 @@ enum ErrorClass {
     Other,
 }
 
-/// Keys the `StopFailure` discriminator might live under.
+/// Keys the `StopFailure` discriminator might live under, best first.
 ///
-/// The event's matcher is documented to filter on the error type, but the
-/// payload schema itself is not published. Rather than guess one name, consult
-/// every plausible one and fall back to a plain failure — which is the correct
-/// behaviour even once the real name is confirmed.
-const ERROR_TYPE_KEYS: [&str; 4] = ["error_type", "stop_failure_type", "reason", "type"];
+/// Claude Code sends it as a plain string under `error` — the field its hook
+/// matcher filters on, and what its payload builder writes (`error: "rate_limit"`).
+/// Before that was confirmed, only `error` as an *object* was consulted, so a
+/// rate limit always played `failed`: "go read the error" for something you
+/// can only wait out. The rest stay as fallbacks for older or other shapes.
+const ERROR_TYPE_KEYS: [&str; 5] = ["error", "error_type", "stop_failure_type", "reason", "type"];
 
 /// The subset a user can respond to by waiting or by fixing billing/auth.
 const RATE_LIMITED: [&str; 4] = [
@@ -164,18 +193,23 @@ const RATE_LIMITED: [&str; 4] = [
 ];
 
 fn classify_stop_failure(obj: &Map<String, Value>) -> ErrorClass {
-    let found = ERROR_TYPE_KEYS
+    // Every candidate is consulted, not just the first present: if `error` ever
+    // carries a message instead of a kind, a fallback key naming the kind must
+    // still be heard rather than hidden behind it.
+    let nested = obj
+        .get("error")
+        .and_then(Value::as_object)
+        .and_then(|e| string_at(e, "type"));
+    let rate_limited = ERROR_TYPE_KEYS
         .iter()
-        .find_map(|key| string_at(obj, key))
-        .or_else(|| {
-            obj.get("error")?
-                .as_object()
-                .and_then(|e| string_at(e, "type"))
-        });
+        .filter_map(|key| string_at(obj, key))
+        .chain(nested)
+        .any(|kind| RATE_LIMITED.contains(&kind));
 
-    match found {
-        Some(kind) if RATE_LIMITED.contains(&kind) => ErrorClass::RateLimited,
-        _ => ErrorClass::Other,
+    if rate_limited {
+        ErrorClass::RateLimited
+    } else {
+        ErrorClass::Other
     }
 }
 

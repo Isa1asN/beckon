@@ -222,7 +222,7 @@ fn simplify(path: PathBuf) -> PathBuf {
 /// empty, so a settings.json saved as UTF-16 — which is what Windows Notepad
 /// and PowerShell produce — was silently replaced with beckon's hooks alone,
 /// and the preview cheerfully showed it as having been empty.
-fn read_settings(path: &Path) -> Result<Value, String> {
+pub(crate) fn read_settings(path: &Path) -> Result<Value, String> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

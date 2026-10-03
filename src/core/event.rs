@@ -100,6 +100,10 @@ pub enum Signal {
     Sound(State),
     /// Record the turn start timestamp. No sound.
     TurnStart,
+    /// The agent woke itself — a background task reported back — rather than
+    /// being prompted by a person. Not a turn start: the duration gate measures
+    /// how long *you* have been away, and you have not been back.
+    Wakeup,
     /// Prune this session's state. No sound.
     SessionEnd,
     /// Recognized but deliberately inert.
@@ -114,6 +118,9 @@ pub struct Event {
     /// The agent's working directory — used for project config and identity.
     pub project: PathBuf,
     pub agent: &'static str,
+    /// The agent feeds this hook's plain stdout to the model — as context, or
+    /// as instructions. beckon must never print on one: see `remote`.
+    pub stdout_reaches_model: bool,
 }
 
 #[cfg(test)]

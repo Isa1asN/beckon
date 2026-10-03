@@ -120,15 +120,29 @@ pub fn decide(input: PolicyInput) -> Decision {
     // 6. The duration gate. A turn that finished quickly means you were still
     //    watching, so there is nothing to summon you to. States in
     //    `always_alert` are exempt: they stall progress regardless of timing.
+    //
+    //    Measured from whichever is later: your last prompt, or the last time
+    //    this session played you this same sound. Your prompt alone is not
+    //    enough once the agent can wake itself — background jobs reporting
+    //    back one after another would each end a turn and each chime, though
+    //    the first already told you everything the rest do.
+    //
+    //    An anchor in the future is clock skew, not information, and is
+    //    skipped rather than allowed to outrank a sound one.
     if !config.policy.always_alert.contains(&input.state) {
-        if let Some(started) = input.turn_started {
-            let seconds = (now - started).num_seconds();
-            if seconds >= 0 && (seconds as u64) < config.policy.min_turn_seconds {
+        let anchor = [input.turn_started, input.last_played]
+            .into_iter()
+            .flatten()
+            .filter(|when| *when <= now)
+            .max();
+        if let Some(anchor) = anchor {
+            let seconds = (now - anchor).num_seconds();
+            if (seconds as u64) < config.policy.min_turn_seconds {
                 return Decision::Suppress(Reason::TooShort);
             }
         }
-        // `None` means we never saw the turn start. Fail open: an extra chime
-        // beats mysterious silence.
+        // No anchor means we never saw the turn start and have not played
+        // this sound. Fail open: an extra chime beats mysterious silence.
     }
 
     Decision::Play {
@@ -283,8 +297,10 @@ mod tests {
 
     #[test]
     fn rate_limit_releases_after_its_window() {
+        // An always-alert state: for a gated one, a repeat this soon is held
+        // back by the duration gate instead, which has its own tests.
         let c = Config::default();
-        let mut i = input(State::Done, &c);
+        let mut i = input(State::NeedsYou, &c);
         i.last_played = Some(base() - Duration::milliseconds(2000));
         assert!(matches!(decide(i), Decision::Play { .. }));
     }
@@ -377,9 +393,65 @@ mod tests {
 
     #[test]
     fn a_zero_rate_limit_disables_throttling() {
+        // An always-alert state, so the duration gate — which also counts a
+        // just-played repeat — cannot be what lets this through or stops it.
         let c = config(|c| c.policy.rate_limit_ms = 0);
-        let mut i = input(State::Done, &c);
+        let mut i = input(State::NeedsYou, &c);
         i.last_played = Some(base());
+        assert!(matches!(decide(i), Decision::Play { .. }));
+    }
+
+    #[test]
+    fn a_repeat_done_with_no_prompt_in_between_is_gated_from_the_last_chime() {
+        // You asked five minutes ago and left; the agent finished (chime), then
+        // a background job reported back and it finished again ten seconds
+        // later. The second chime tells you nothing the first did not.
+        let c = Config::default();
+        let mut i = input(State::Done, &c);
+        i.turn_started = Some(base() - Duration::minutes(5));
+        i.last_played = Some(base() - Duration::seconds(10));
+        assert_eq!(decide(i), Decision::Suppress(Reason::TooShort));
+    }
+
+    #[test]
+    fn a_repeat_done_long_after_the_last_chime_plays() {
+        // The same, but the background job took twenty minutes. You may have
+        // looked, shrugged and left again — this is news.
+        let c = Config::default();
+        let mut i = input(State::Done, &c);
+        i.turn_started = Some(base() - Duration::minutes(30));
+        i.last_played = Some(base() - Duration::minutes(20));
+        assert!(matches!(decide(i), Decision::Play { .. }));
+    }
+
+    #[test]
+    fn a_new_prompt_resets_the_gate_past_an_earlier_chime() {
+        // The chime belongs to the previous turn; your prompt since is the
+        // later anchor, so a long turn after it plays as it always did.
+        let c = Config::default();
+        let mut i = input(State::Done, &c);
+        i.last_played = Some(base() - Duration::minutes(10));
+        i.turn_started = Some(base() - Duration::minutes(2));
+        assert!(matches!(decide(i), Decision::Play { .. }));
+    }
+
+    #[test]
+    fn a_future_last_played_does_not_switch_the_gate_off() {
+        // The clock stepped back after a chime was recorded. The real turn
+        // start still gates a five-second turn.
+        let c = Config::default();
+        let mut i = input(State::Done, &c);
+        i.turn_started = Some(base() - Duration::seconds(5));
+        i.last_played = Some(base() + Duration::seconds(45));
+        assert_eq!(decide(i), Decision::Suppress(Reason::TooShort));
+    }
+
+    #[test]
+    fn a_recent_chime_never_gates_an_always_alert_state() {
+        let c = config(|c| c.policy.rate_limit_ms = 0);
+        let mut i = input(State::NeedsYou, &c);
+        i.turn_started = Some(base() - Duration::minutes(5));
+        i.last_played = Some(base() - Duration::seconds(3));
         assert!(matches!(decide(i), Decision::Play { .. }));
     }
 

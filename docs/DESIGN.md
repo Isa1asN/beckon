@@ -117,12 +117,13 @@ look" chime for something that isn't finished trains people to ignore it.
 | Hook event | Discriminator | → state | Default |
 |---|---|---|---|
 | `UserPromptSubmit` | — | *(no sound; records turn start)* | on |
+| `UserPromptSubmit` | prompt opens with `<task-notification>` | *(no sound; a wakeup — records nothing)* | on |
 | `Stop` | — | `done` | on, duration-gated |
 | `Notification` | `permission_prompt` | `needs-you` | on, ungated |
 | `Notification` | `agent_needs_input`, `elicitation_dialog` | `needs-you` | on, ungated |
 | `Notification` | `idle_prompt` | `idle-waiting` | on, ungated |
 | `Notification` | `agent_completed` | `done` | on |
-| `StopFailure` | `rate_limit`, `overloaded`, `billing_error`, `authentication_failed` | `rate-limited` | on, ungated |
+| `StopFailure` | `error`: `rate_limit`, `overloaded`, `billing_error`, `authentication_failed` | `rate-limited` | on, ungated |
 | `StopFailure` | any other | `failed` | on, ungated |
 | `PostToolUseFailure` | — | `tool-failed` | **off** |
 | `SubagentStop` | — | `subagent-done` | **off** |
@@ -182,10 +183,23 @@ Ordered checks; first match wins.
    before any of them writes, and nothing is collapsed at all.
 
 
-5. **Duration gate:** for any state *not* listed in `always_alert`, if the turn
-   ran shorter than `min_turn_seconds` (default 30), stay silent — a short turn
-   means you were watching. In practice this gates `done` and `subagent-done`;
-   everything blocking or broken is in `always_alert` by default.
+5. **Duration gate:** for any state *not* listed in `always_alert`, if fewer
+   than `min_turn_seconds` (default 30) have passed since the later of *your
+   last prompt* and *the last time this session played this same state*, stay
+   silent — you were watching, or you have just been told. In practice this
+   gates `done` and `subagent-done`; everything blocking or broken is in
+   `always_alert` by default.
+
+   Only a person's prompt starts a turn. Claude Code also fires
+   `UserPromptSubmit` when a background task reports back, with the
+   notification as the prompt text and no other way to tell it apart. Counting
+   that as a turn start reset the gate just as the agent wrapped up the work you
+   had left it to: replayed over 1,356 real turn ends, 86 `done` chimes were
+   silenced after the person had been away from one minute to ninety. Those
+   prompts are now wakeups and leave the turn start alone. The "last played"
+   half of the anchor is what keeps that from turning into noise — jobs
+   reporting back one after another each end a turn, and without it 25 of the
+   recovered chimes landed within 30 seconds of another.
 
    Note that `subagent-done` is gated against the *parent* turn, because a
    subagent never emits `UserPromptSubmit` and so has no start of its own. That
@@ -311,25 +325,39 @@ invalidate for no gain.
 
 ## 9. Remote / SSH
 
-> **Designed, not built.** No part of this ships today; a remote agent plays
-> audio on the remote machine. Recorded here because the pack format and config
-> schema already carry the seams for it (`[remote]`, §14).
-
 When the agent runs on a remote box, playing audio *there* is useless. beckon
 detects `SSH_CONNECTION`/`SSH_TTY` and instead emits escape sequences via the
 hook's `terminalSequence` output, which travel back to the terminal on your desk.
+Through the agent rather than written to `/dev/tty` directly: the agent is
+redrawing that terminal, and bytes written underneath it can split one of its
+own sequences.
+
+Claude Code (2.1.288) writes a hook's `terminalSequence` only if it passes an
+allowlist: BEL, or OSC 0/1/2/9/99/777, at most 4096 bytes, and no OSC 9 body that
+opens with a digit. Failing it drops the *whole* sequence, bell included, so every
+notification body opens with the state's label — never the project name, which
+could be `2048` — and `src/remote.rs` tests every state against a port of that
+allowlist.
+
+Never on an event whose stdout reaches the model (`UserPromptSubmit`,
+`SessionStart`, `PreCompact`): such output is parsed as JSON first, but that is a
+detail of one agent version, and principle 2 is not worth a prompt. `beckon test`
+over SSH sends the real sequence to your terminal, so you can see what yours does
+with it before an agent needs it to work.
 
 Default set is conservative — `bel` (`\x07`, universal) and `osc9`
 (`\x1b]9;<msg>\x07`, desktop notification in iTerm2, Windows Terminal and
 others). `osc777` is opt-in because support is patchier. `remote.mode` accepts `auto`
 (sequences only when SSH is detected — the default), `off` (never), `always`
 (sequences regardless of SSH, and no local audio) and `both` (local audio *and*
-sequences, for a local terminal you want notified too). Per the hook docs,
-`terminalSequence` is unsupported on `StopFailure`, so that event is bell-only
-when remote.
+sequences, for a local terminal you want notified too). `StopFailure` is
+documented as fire-and-forget with its output ignored; 2.1.288's hook runner
+applies `terminalSequence` while executing any command hook, so it does arrive
+there, but that is the one event where it rests on an implementation detail.
 
-Shipped as best-effort and documented as such: verified on Ghostty, WezTerm,
-Kitty and iTerm2 before v0.1 claims support for any of them.
+Shipped as best-effort and documented as such. Verified against the agent's
+allowlist and through `beckon test`; not yet confirmed end to end in Ghostty,
+WezTerm, Kitty or iTerm2, and the README claims no terminal by name until it is.
 
 ## 10. Install and trust
 
