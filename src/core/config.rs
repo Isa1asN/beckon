@@ -9,6 +9,7 @@
 //! someone's agent session.
 
 use crate::core::event::State;
+use crate::core::files;
 use crate::core::paths::Paths;
 use chrono::NaiveTime;
 use serde::Deserialize;
@@ -258,7 +259,7 @@ impl Config {
 
         let mut layers = vec![read_layer(&paths.config_file)];
         if let Some(root) = project_root {
-            let mut project = read_layer(&root.join(PROJECT_CONFIG_FILE));
+            let mut project = read_project_layer(root);
             // A project config arrives with the repository, so it is not the
             // user's word. Letting it name files would hand any repository you
             // clone the ability to make your machine open arbitrary paths and
@@ -273,6 +274,16 @@ impl Config {
                     names.join(", ")
                 ));
                 project.partial.sounds.clear();
+            }
+            // Nor where your alerts go. Local speakers or your terminal is a
+            // choice about your machine, not about the code in this directory.
+            if project.partial.remote != PartialRemote::default() {
+                project.warnings.push(format!(
+                    "{}: ignoring [remote] — where alerts go may only be set in your own \
+                     config, not by a project",
+                    root.join(PROJECT_CONFIG_FILE).display()
+                ));
+                project.partial.remote = PartialRemote::default();
             }
             layers.push(project);
         }
@@ -335,10 +346,33 @@ struct PartialIdentity {
     per_project: Option<bool>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, PartialEq, Deserialize)]
 struct PartialRemote {
     mode: Option<RemoteMode>,
     sequences: Option<Vec<Sequence>>,
+}
+
+/// The project layer, if this project's `.beckon.toml` can be taken as the
+/// project's at all.
+///
+/// Not from a directory every account can write (`/tmp`): anyone could have
+/// put it there. Not through a symlink: a repository has no reason to ship
+/// one, and a link is how it would point the read at something else.
+fn read_project_layer(root: &Path) -> Layer {
+    let path = root.join(PROJECT_CONFIG_FILE);
+    let refuse = |why: &str| Layer {
+        partial: PartialConfig::default(),
+        warnings: vec![format!("ignoring {}: {why}", path.display())],
+    };
+    if files::world_writable(root) && path.exists() {
+        return refuse(
+            "its directory is writable by every account, so anyone could have put it there",
+        );
+    }
+    if files::is_symlink(&path) {
+        return refuse("a project config must be a regular file, not a symlink");
+    }
+    read_layer(&path)
 }
 
 struct Layer {
@@ -517,7 +551,10 @@ fn unknown_keys(value: &toml::Value) -> Vec<String> {
 /// Read one TOML layer. A missing file is not a problem; a malformed one warns
 /// and contributes nothing.
 fn read_layer(path: &Path) -> Layer {
-    let text = match std::fs::read_to_string(path) {
+    // Bounded and regular-file-only. A repository can commit `.beckon.toml` as
+    // a symlink to /dev/zero, and the hook reads it on every event: unbounded,
+    // that read used gigabytes and outlived the agent's hook timeout.
+    let text = match files::read_bounded(path, files::limit::CONFIG) {
         Ok(text) => text,
         // Absent is normal. Anything else — invalid UTF-8, a symlink loop, a
         // directory — is a file the user believes is being read, so say so

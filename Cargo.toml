@@ -37,6 +37,11 @@ rodio = { version = "0.21.1", default-features = false, features = [
 ], optional = true }
 toml_edit = "0.25.5"
 
+# Already in the tree via the audio stack and `directories`; named here for
+# O_NOFOLLOW, whose value differs between Linux architectures and macOS.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

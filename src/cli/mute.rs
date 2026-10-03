@@ -18,7 +18,8 @@ pub fn mute(spec: Option<String>) -> i32 {
             Some(d) => d,
             None => {
                 eprintln!(
-                    "cannot read `{raw}` as a duration. Try 30s, 15m, 2h, or omit it for 30m."
+                    "cannot read `{}` as a duration. Try 30s, 15m, 2h, or omit it for 30m.",
+                    crate::cli::safe(raw)
                 );
                 return 2;
             }

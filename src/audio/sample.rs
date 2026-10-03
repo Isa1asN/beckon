@@ -132,8 +132,59 @@ pub fn load(path: &Path) -> Result<Pcm, SampleError> {
     if metadata.len() > MAX_FILE_BYTES {
         return Err(SampleError::TooLarge(label));
     }
+    if !plausible_wav(path) {
+        return Err(SampleError::Undecodable(label));
+    }
 
     decode(path, &label)
+}
+
+/// Reject a WAV whose format chunk declares zero channels or a zero sample
+/// rate, before the decoder sees it.
+///
+/// The decoder panics on a zero rate ("TimeBase cannot have 0 numerator or
+/// denominator") rather than returning an error, and a panic is not something
+/// to catch: the release build aborts on one. Anything that is not a RIFF/WAVE
+/// file passes through untouched — this vets one known shape, not all audio.
+///
+/// The chunk list is walked by seeking, over the whole file — at most
+/// `MAX_FILE_BYTES` — since metadata chunks can push the format chunk
+/// anywhere. A file too broken to walk is left for the decoder to refuse.
+fn plausible_wav(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    /// Real files have a handful of chunks; this only bounds a hostile one.
+    const MAX_CHUNKS: usize = 4096;
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return true; // the decoder will report it unreadable
+    };
+    let mut riff = [0u8; 12];
+    if file.read_exact(&mut riff).is_err() || &riff[0..4] != b"RIFF" || &riff[8..12] != b"WAVE" {
+        return true;
+    }
+
+    for _ in 0..MAX_CHUNKS {
+        let mut header = [0u8; 8];
+        if file.read_exact(&mut header).is_err() {
+            return true; // no format chunk at all: the decoder refuses it
+        }
+        let size = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+        if &header[0..4] == b"fmt " {
+            let mut fmt = [0u8; 8];
+            if file.read_exact(&mut fmt).is_err() {
+                return true; // truncated: the decoder refuses it
+            }
+            let channels = u16::from_le_bytes([fmt[2], fmt[3]]);
+            let rate = u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]);
+            return channels > 0 && rate > 0;
+        }
+        // Chunks are word-aligned.
+        let skip = i64::from(size) + i64::from(size & 1);
+        if file.seek(SeekFrom::Current(skip)).is_err() {
+            return true;
+        }
+    }
+    true
 }
 
 #[cfg(feature = "embedded-audio")]
@@ -401,6 +452,67 @@ mod tests {
         file.set_len(MAX_FILE_BYTES + 1).unwrap();
         drop(file);
         assert!(matches!(load(&big), Err(SampleError::TooLarge(_))));
+    }
+
+    #[test]
+    fn a_wav_declaring_zero_rate_or_channels_is_refused_not_a_panic() {
+        // The decoder panics on a zero sample rate; the release build aborts
+        // on a panic, so this has to be caught before it gets there.
+        let dir = tempfile::tempdir().unwrap();
+        let pcm = crate::audio::synth::Pcm {
+            sample_rate: 48_000,
+            channels: 2,
+            samples: vec![0.1; 4800],
+        };
+        let good = crate::audio::wav::encode(&pcm);
+        for (name, offset, width) in [("rate0.wav", 24, 4), ("chan0.wav", 22, 2)] {
+            let mut bytes = good.clone();
+            bytes[offset..offset + width].fill(0);
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            assert!(
+                matches!(load(&path), Err(SampleError::Undecodable(_))),
+                "{name}: {:?}",
+                load(&path)
+            );
+        }
+        let path = dir.path().join("fine.wav");
+        std::fs::write(&path, &good).unwrap();
+        assert!(load(&path).is_ok(), "the check must not refuse a real WAV");
+    }
+
+    #[test]
+    fn a_format_chunk_far_into_the_file_is_still_vetted() {
+        // Broadcast WAVs carry large metadata chunks before `fmt `; the check
+        // must neither reject a good one nor miss a zero rate behind them.
+        let dir = tempfile::tempdir().unwrap();
+        let pcm = crate::audio::synth::Pcm {
+            sample_rate: 48_000,
+            channels: 2,
+            samples: vec![0.1; 4800],
+        };
+        let canonical = crate::audio::wav::encode(&pcm);
+        // Insert a 70 000-byte `LIST` chunk between the RIFF header and `fmt `.
+        let mut padded = canonical[..12].to_vec();
+        padded.extend_from_slice(b"LIST");
+        padded.extend_from_slice(&70_000u32.to_le_bytes());
+        padded.extend(std::iter::repeat_n(0u8, 70_000));
+        padded.extend_from_slice(&canonical[12..]);
+        let riff_size = (padded.len() - 8) as u32;
+        padded[4..8].copy_from_slice(&riff_size.to_le_bytes());
+
+        let good = dir.path().join("bwf.wav");
+        std::fs::write(&good, &padded).unwrap();
+        assert!(plausible_wav(&good), "a good file was refused");
+
+        let rate_at = 12 + 8 + 70_000 + 8 + 4;
+        padded[rate_at..rate_at + 4].fill(0);
+        let bad = dir.path().join("bwf-rate0.wav");
+        std::fs::write(&bad, &padded).unwrap();
+        assert!(
+            !plausible_wav(&bad),
+            "a zero rate behind metadata got through"
+        );
     }
 
     #[test]

@@ -49,24 +49,122 @@ pub enum MergeError {
     EventNotArray(String),
 }
 
-/// Split a command into its program and the rest, honouring a quoted path.
+/// Split a command into its program and the rest, reading the first word the
+/// way a POSIX shell would.
 ///
 /// Splitting on whitespace first is wrong: `init` quotes a path containing
 /// spaces, and a naive split then reads the program as `"/opt/my`. beckon stops
 /// recognising its own entries, `uninstall` becomes a no-op, and every `init`
 /// appends another copy.
-fn split_program(command: &str) -> Option<(&str, &str)> {
-    let trimmed = command.trim_start();
-    match trimmed.strip_prefix('"') {
-        Some(rest) => {
-            let end = rest.find('"')?;
-            Some((&rest[..end], &rest[end + 1..]))
-        }
-        None => {
-            let end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
-            Some((&trimmed[..end], &trimmed[end..]))
+///
+/// Understands everything `init` has ever written: a bare path, a
+/// double-quoted one, and a single-quoted one with `'\''` standing for a quote
+/// inside it. A backslash outside quotes escapes only what a shell would need
+/// escaping, so a Windows path like `C:\Users\me\beckon.exe` reads as itself.
+fn split_program(command: &str) -> Option<(String, &str)> {
+    shell_word(command).or_else(|| {
+        // Not a word a shell could read — an unterminated quote. Older
+        // versions wrote exactly that for an install path containing `'`, left
+        // bare: the entry that exits 2 on every prompt. Read it the way they
+        // wrote it, so `init` replaces it and `uninstall` removes it.
+        let text = command.trim_start();
+        let end = text.find(char::is_whitespace).unwrap_or(text.len());
+        (end > 0).then(|| (text[..end].to_string(), &text[end..]))
+    })
+}
+
+/// The first word of `command` as a POSIX shell reads it, or `None` if a
+/// quote is never closed.
+fn shell_word(command: &str) -> Option<(String, &str)> {
+    let text = command.trim_start();
+    let mut program = String::new();
+    let mut chars = text.char_indices().peekable();
+    let mut end = text.len();
+    let escapable = |c: char| matches!(c, '\'' | '"' | '\\' | '$' | '`' | ' ');
+
+    while let Some((i, c)) = chars.next() {
+        match c {
+            c if c.is_whitespace() => {
+                end = i;
+                break;
+            }
+            '\'' => loop {
+                match chars.next()? {
+                    (_, '\'') => break,
+                    (_, c) => program.push(c),
+                }
+            },
+            '"' => loop {
+                match chars.next()? {
+                    (_, '"') => break,
+                    (_, '\\') => match chars.peek() {
+                        Some(&(_, n)) if matches!(n, '"' | '\\' | '$' | '`') => {
+                            program.push(n);
+                            chars.next();
+                        }
+                        _ => program.push('\\'),
+                    },
+                    (_, c) => program.push(c),
+                }
+            },
+            '\\' => match chars.peek() {
+                Some(&(_, n)) if escapable(n) => {
+                    program.push(n);
+                    chars.next();
+                }
+                _ => program.push('\\'),
+            },
+            c => program.push(c),
         }
     }
+    (!program.is_empty()).then_some((program, &text[end..]))
+}
+
+/// Quote a path so the hook's shell reads it back as exactly one word,
+/// unchanged.
+///
+/// Left bare when it is made only of characters no shell treats specially, so
+/// the common case stays readable. Otherwise single-quoted, with each `'`
+/// written as `'\''`. The old rule — double quotes, only around whitespace —
+/// ran `$(...)` and `;` in an install path as commands, and a lone `'` (an
+/// account called O'Brien) left an unterminated quote: exit 2, which Claude
+/// Code treats as a blocking error on every prompt.
+pub fn shell_quote(path: &str) -> String {
+    if is_plain(path) {
+        path.to_string()
+    } else {
+        format!("'{}'", path.replace('\'', "'\\''"))
+    }
+}
+
+/// [`shell_quote`] for Windows, where the hook shell is Git Bash.
+///
+/// Double quotes, as beckon always wrote there: Git Bash reads them, and so
+/// does cmd.exe, which single quotes would not survive. Inside them only `$`,
+/// `` ` ``, `\` and `"` are special to bash, so those are escaped. PowerShell,
+/// used when Git Bash is absent, runs a quoted path in neither form; a path
+/// that needs quoting is not supported there by any shell command — a known
+/// limitation, recorded in DESIGN.
+pub fn shell_quote_windows(path: &str) -> String {
+    if is_plain(path) {
+        return path.to_string();
+    }
+    let mut quoted = String::from("\"");
+    for c in path.chars() {
+        if matches!(c, '$' | '`' | '\\' | '"') {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    quoted.push('"');
+    quoted
+}
+
+fn is_plain(path: &str) -> bool {
+    !path.is_empty()
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._+,:@%=-".contains(c))
 }
 
 /// Does this command invoke a program actually named `beckon`?
@@ -77,10 +175,9 @@ fn program_is_beckon(command: &str) -> bool {
     let Some((program, _)) = split_program(command) else {
         return false;
     };
+    // Either separator, so a Windows path is recognised wherever it is read.
     matches!(
-        std::path::Path::new(program)
-            .file_name()
-            .and_then(|n| n.to_str()),
+        program.rsplit(['/', '\\']).next(),
         Some("beckon") | Some("beckon.exe")
     )
 }
@@ -410,7 +507,7 @@ pub fn beckon_bindings(value: &Value) -> Vec<(String, Vec<String>)> {
 }
 
 /// The program a hook command runs, unquoted.
-pub fn program_of(command: &str) -> Option<&str> {
+pub fn program_of(command: &str) -> Option<String> {
     split_program(command).map(|(program, _)| program)
 }
 
@@ -705,12 +802,82 @@ mod tests {
     #[test]
     fn program_of_honours_a_quoted_path() {
         assert_eq!(
-            program_of("\"/opt/my apps/beckon\" hook claude-code"),
+            program_of("\"/opt/my apps/beckon\" hook claude-code").as_deref(),
             Some("/opt/my apps/beckon")
         );
         assert_eq!(
-            program_of("/usr/bin/beckon hook claude-code"),
+            program_of("/usr/bin/beckon hook claude-code").as_deref(),
             Some("/usr/bin/beckon")
+        );
+    }
+
+    #[test]
+    fn a_quoted_path_round_trips_through_the_parser() {
+        for path in [
+            "/usr/bin/beckon",
+            "/opt/my apps/beckon",
+            "/home/o'brien/.cargo/bin/beckon",
+            "/tmp/semi;touch x;y/beckon",
+            "/tmp/$(touch x)/beckon",
+            "/tmp/`touch x`/beckon",
+            "/tmp/dq\"x/beckon",
+            "C:/Users/John Smith/.cargo/bin/beckon.exe",
+        ] {
+            let command = format!("{} hook claude-code", shell_quote(path));
+            assert_eq!(program_of(&command).as_deref(), Some(path), "{command}");
+            assert!(is_beckon_command(&command), "{command}");
+        }
+    }
+
+    #[test]
+    fn a_windows_path_round_trips_in_double_quotes() {
+        for path in [
+            "C:/Users/John Smith/.cargo/bin/beckon.exe",
+            "C:/Users/O'Brien/.cargo/bin/beckon.exe",
+            "C:/Users/me/$dev `x`/beckon.exe",
+        ] {
+            let command = format!("{} hook claude-code", shell_quote_windows(path));
+            assert!(command.starts_with('"'), "{command}");
+            assert_eq!(program_of(&command).as_deref(), Some(path), "{command}");
+        }
+        assert_eq!(
+            shell_quote_windows("C:/Users/me/beckon.exe"),
+            "C:/Users/me/beckon.exe"
+        );
+    }
+
+    #[test]
+    fn a_plain_path_is_left_bare() {
+        assert_eq!(
+            shell_quote("/usr/local/bin/beckon"),
+            "/usr/local/bin/beckon"
+        );
+        assert_eq!(
+            shell_quote("C:/Users/me/beckon.exe"),
+            "C:/Users/me/beckon.exe"
+        );
+        assert_eq!(shell_quote("/a b"), "'/a b'");
+        assert_eq!(shell_quote("/o'b"), "'/o'\\''b'");
+    }
+
+    #[test]
+    fn every_form_init_has_ever_written_is_still_recognised() {
+        // uninstall must find entries older versions wrote.
+        for command in [
+            "/home/me/.cargo/bin/beckon hook claude-code",
+            "\"/opt/my apps/beckon\" hook claude-code",
+            "C:\\Users\\me\\.cargo\\bin\\beckon.exe hook claude-code",
+            "\"C:\\Users\\John Smith\\.cargo\\bin\\beckon.exe\" hook claude-code",
+        ] {
+            assert!(is_beckon_command(command), "{command}");
+        }
+        // The bare form older versions wrote for a path with a quote in it —
+        // the one that blocks every prompt — must be found, to be replaced.
+        let broken = "/home/o'brien/.cargo/bin/beckon hook claude-code";
+        assert!(is_beckon_command(broken));
+        assert_eq!(
+            program_of(broken).as_deref(),
+            Some("/home/o'brien/.cargo/bin/beckon")
         );
     }
 

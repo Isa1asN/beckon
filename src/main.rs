@@ -142,7 +142,7 @@ enum Cmd {
 
 fn main() {
     // First statement, before any work can panic.
-    install_panic_guard();
+    install_panic_guard(invoked_as_hook());
 
     let code = match Cli::try_parse() {
         Ok(cli) => dispatch(cli.command),
@@ -236,7 +236,8 @@ fn parse_state(raw: Option<String>) -> Result<Option<State>, i32> {
             Some(state) => Ok(Some(state)),
             None => {
                 eprintln!(
-                    "unknown state `{name}`. Valid states: {}",
+                    "unknown state `{}`. Valid states: {}",
+                    beckon_cli::cli::safe(&name),
                     State::ALL.map(|s| s.as_str()).join(", ")
                 );
                 Err(2)

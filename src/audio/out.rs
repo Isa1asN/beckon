@@ -147,10 +147,36 @@ pub fn system_player_report() -> Vec<(&'static str, bool)> {
 }
 
 fn on_path(program: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| is_executable(&dir.join(program)))
+    locate(program).is_some()
+}
+
+/// Where a player lives, found the way a careful shell would: in absolute
+/// `PATH` entries only.
+///
+/// An empty or relative entry means "the current directory" — and the player
+/// runs in the detached child with the *agent's* working directory, which is
+/// whatever repository it was working in. With `.` on `PATH`, a repository
+/// that shipped its own `paplay` had it run. The result is absolute and is
+/// what gets executed, so the search and the spawn cannot disagree.
+fn locate(program: &str) -> Option<PathBuf> {
+    locate_in(&std::env::var_os("PATH")?, program)
+}
+
+fn locate_in(path: &std::ffi::OsStr, program: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .filter(|dir| dir.is_absolute())
+        .flat_map(|dir| candidates(&dir, program))
+        .find(|candidate| is_executable(candidate))
+}
+
+#[cfg(unix)]
+fn candidates(dir: &Path, program: &str) -> Vec<PathBuf> {
+    vec![dir.join(program)]
+}
+
+#[cfg(not(unix))]
+fn candidates(dir: &Path, program: &str) -> Vec<PathBuf> {
+    vec![dir.join(program), dir.join(format!("{program}.exe"))]
 }
 
 #[cfg(unix)]
@@ -161,7 +187,7 @@ fn is_executable(path: &Path) -> bool {
 
 #[cfg(not(unix))]
 fn is_executable(path: &Path) -> bool {
-    path.is_file() || path.with_extension("exe").is_file()
+    path.is_file()
 }
 
 /// Scale by user volume, clamped. Kept separate so it is testable without audio.
@@ -204,6 +230,8 @@ fn play_embedded(pcm: &Pcm, volume: f32) -> Result<(), Box<dyn std::error::Error
 }
 
 fn play_system(pcm: &Pcm, volume: f32, program: &str) -> std::io::Result<()> {
+    let executable = locate(program)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, program.to_string()))?;
     let scaled = Pcm {
         samples: scaled(pcm, volume),
         ..pcm.clone()
@@ -216,7 +244,7 @@ fn play_system(pcm: &Pcm, volume: f32, program: &str) -> std::io::Result<()> {
         .map(|(_, args)| *args)
         .unwrap_or(&[]);
 
-    let result = spawn_player(program, args, &path);
+    let result = spawn_player(&executable, args, &path);
     let _ = std::fs::remove_file(&path);
     result
 }
@@ -257,26 +285,37 @@ fn create_temp_wav(pcm: &Pcm) -> std::io::Result<PathBuf> {
     Err(std::io::Error::other("no free temporary filename"))
 }
 
+/// The path reaches PowerShell through the environment, never spliced into
+/// the script: a `'` in `%TEMP%` — an account called O'Brien — ended the
+/// quoted literal, so the script failed to parse, and the rest of the path was
+/// read as PowerShell.
 #[cfg(target_os = "windows")]
-fn spawn_player(program: &str, args: &[&str], path: &Path) -> std::io::Result<()> {
-    let script = format!(
-        "(New-Object Media.SoundPlayer '{}').PlaySync()",
-        path.display()
-    );
-    std::process::Command::new(program)
+fn spawn_player(program: &Path, args: &[&str], path: &Path) -> std::io::Result<()> {
+    let status = std::process::Command::new(program)
         .args(args)
-        .arg(script)
-        .status()
-        .map(|_| ())
+        .arg("(New-Object Media.SoundPlayer $env:BECKON_WAV).PlaySync()")
+        .env("BECKON_WAV", path)
+        .status()?;
+    succeeded(status)
 }
 
 #[cfg(not(target_os = "windows"))]
-fn spawn_player(program: &str, args: &[&str], path: &Path) -> std::io::Result<()> {
-    std::process::Command::new(program)
+fn spawn_player(program: &Path, args: &[&str], path: &Path) -> std::io::Result<()> {
+    let status = std::process::Command::new(program)
         .args(args)
         .arg(path)
-        .status()
-        .map(|_| ())
+        .status()?;
+    succeeded(status)
+}
+
+/// A player that ran but failed must count as a failure, so the next tier —
+/// the bell — gets its turn instead of the sound vanishing.
+fn succeeded(status: std::process::ExitStatus) -> std::io::Result<()> {
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!("player exited {status}")))
+    }
 }
 
 /// Write a bell to the terminal, preferring the tty over stderr so it lands
@@ -368,6 +407,40 @@ mod tests {
             Some(program) => assert!(report.iter().any(|(p, ok)| *p == program && *ok)),
             None => assert!(report.iter().all(|(_, ok)| !ok)),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_player_in_the_current_directory_is_never_chosen() {
+        // `.` or an empty entry on PATH means the agent's working directory —
+        // a repository could ship its own `paplay`.
+        use std::os::unix::fs::PermissionsExt;
+        let repo = tempfile::tempdir().unwrap();
+        let fake = repo.path().join("paplay");
+        std::fs::write(&fake, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // A relative entry that genuinely leads to it from here, so only the
+        // absolute-entries rule can be what refuses it.
+        let here = std::env::current_dir().unwrap();
+        let up = "../".repeat(here.components().count().saturating_sub(1));
+        let relative = format!(
+            "{up}{}",
+            repo.path().display().to_string().trim_start_matches('/')
+        );
+        assert!(
+            Path::new(&relative).join("paplay").is_file(),
+            "test setup: {relative}"
+        );
+        assert_eq!(locate_in(std::ffi::OsStr::new(&relative), "paplay"), None);
+        assert_eq!(locate_in(std::ffi::OsStr::new(".::bin"), "paplay"), None);
+
+        let joined = std::env::join_paths([repo.path()]).unwrap();
+        assert_eq!(
+            locate_in(&joined, "paplay"),
+            Some(fake),
+            "an absolute entry still works"
+        );
     }
 
     #[test]

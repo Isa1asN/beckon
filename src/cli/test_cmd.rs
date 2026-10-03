@@ -21,7 +21,10 @@ pub fn run(pack_id: Option<String>, only: Option<State>, here: bool) -> i32 {
 
     let id = pack_id.unwrap_or_else(|| config.pack.clone());
     let Some((pack, origin)) = store::load(&paths, &id) else {
-        eprintln!("no pack named `{id}`. Try `beckon packs` to see what is available.");
+        eprintln!(
+            "no pack named `{}`. Try `beckon packs` to see what is available.",
+            crate::cli::safe(&id)
+        );
         return 1;
     };
 
@@ -44,7 +47,7 @@ pub fn run(pack_id: Option<String>, only: Option<State>, here: bool) -> i32 {
     if here {
         println!(
             "  as heard in {} (transposed {transpose:+} semitones)",
-            root.display()
+            crate::cli::safe_path(&root)
         );
     }
     println!();
@@ -66,7 +69,7 @@ pub fn run(pack_id: Option<String>, only: Option<State>, here: bool) -> i32 {
         };
 
         let origin = match source {
-            Source::File(path) => format!("  your file: {}", path.display()),
+            Source::File(path) => format!("  your file: {}", crate::cli::safe_path(path)),
             Source::Pack(_) if source_state == *state => String::new(),
             Source::Pack(_) => format!("  via {source_state}"),
         };

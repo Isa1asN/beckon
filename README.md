@@ -192,10 +192,33 @@ a pack's samples must resolve inside the pack after symlinks are followed.
 - No network at hook time.
 - No telemetry.
 - Packs are data, never executed.
-- Exits 0 unconditionally — bad config, no audio device, corrupt input, panic.
-  beckon binds hooks that block the agent on a non-zero exit, so this is
-  verified against the release binary, where `panic = "abort"` puts it beyond
-  the reach of `cargo test`.
+- The hook exits 0 unconditionally — bad config, no audio device, corrupt
+  input, panic. beckon binds hooks that block the agent on a non-zero exit, so
+  this is verified against the release binary, where `panic = "abort"` puts it
+  beyond the reach of `cargo test`.
+
+## Security
+
+beckon runs inside your agent's hooks, in whatever repository the agent is
+working in, so it treats that repository as untrusted:
+
+- A repository's `.beckon.toml` can change *when* beckon sounds. It cannot
+  name files (`[sounds]`) or decide where alerts go (`[remote]`), and it is
+  ignored if it is a symlink or sits in a directory anyone can write (`/tmp`).
+- Every file beckon reads is a regular file under a size cap, so a config or
+  pack linked to `/dev/zero`, or a FIFO, cannot hang or exhaust the hook.
+- `beckon init` keeps `settings.json`'s permissions exactly — it holds API
+  keys — and quotes its own path so no install location can break or inject
+  into the hook command.
+- Nothing is run from the agent's working directory, and `doctor` never runs a
+  program named by a repository's settings.
+- Text from files beckon did not write is escaped before it reaches your
+  terminal or the trace log.
+
+Debug logs (`BECKON_TRACE`, `BECKON_DUMP`) are created private; the dump holds
+whole prompts, so keep it out of shared directories. The full model is in
+[docs/DESIGN.md §16](docs/DESIGN.md). Found something? Please open an issue,
+or for anything sensitive, contact the maintainer privately first.
 
 ## Roadmap
 

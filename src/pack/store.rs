@@ -3,6 +3,7 @@
 //! Installed packs shadow built-ins of the same id, so someone can iterate on a
 //! fork of `aurora` without renaming it.
 
+use crate::core::files;
 use crate::core::paths::Paths;
 use crate::pack::{builtin, manifest::Pack};
 
@@ -33,8 +34,17 @@ fn load_installed(paths: &Paths, id: &str) -> Option<Pack> {
         return None;
     }
     let dir = paths.packs_dir.join(id);
-    let text = std::fs::read_to_string(dir.join(MANIFEST_NAME)).ok()?;
-    Pack::parse(&text, Some(dir)).ok()
+    // Bounded and regular-file-only: a manifest that is a FIFO hung `packs`,
+    // and one linked to /dev/zero read until memory ran out — in the detached
+    // player, too, before it had claimed a slot.
+    let text = files::read_bounded(&dir.join(MANIFEST_NAME), files::limit::PACK_MANIFEST).ok()?;
+    let mut pack = Pack::parse(&text, Some(dir)).ok()?;
+    // A pack is its directory. Its manifest's id is overruled rather than
+    // trusted: otherwise a pack in `zzfake/` saying `id = "aurora"` listed as
+    // a second `aurora`, active marker and all. A copy of `aurora` made into
+    // `aurora2/` without editing it simply is `aurora2`.
+    pack.meta.id = id.to_string();
+    Some(pack)
 }
 
 /// Every available pack, built-ins and installed, sorted by id, with installed
@@ -117,6 +127,33 @@ mod tests {
         let (pack, origin) = load(&p, "aurora").unwrap();
         assert_eq!(pack.meta.name, "My Aurora");
         assert_eq!(origin, Origin::Installed);
+    }
+
+    #[test]
+    fn a_pack_is_its_directory_whatever_its_manifest_claims() {
+        // A copy of a pack left with the original's id still works under its
+        // own name, and cannot pose as the original in the listing.
+        let (_d, p) = home();
+        install(&p, "aurora", "My Aurora");
+        std::fs::rename(p.packs_dir.join("aurora"), p.packs_dir.join("aurora2")).unwrap();
+
+        let (pack, origin) = load(&p, "aurora2").unwrap();
+        assert_eq!(pack.meta.id, "aurora2");
+        assert_eq!(origin, Origin::Installed);
+
+        let listed: Vec<(String, Origin)> = list(&p)
+            .into_iter()
+            .map(|(pack, origin)| (pack.meta.id, origin))
+            .collect();
+        assert!(
+            listed.contains(&("aurora".to_string(), Origin::Builtin)),
+            "{listed:?}"
+        );
+        assert!(
+            listed.contains(&("aurora2".to_string(), Origin::Installed)),
+            "{listed:?}"
+        );
+        assert_eq!(listed.iter().filter(|(id, _)| id == "aurora").count(), 1);
     }
 
     #[test]

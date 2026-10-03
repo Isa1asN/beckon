@@ -75,11 +75,8 @@ pub fn dump_if_requested(stdin: &[u8]) {
 /// Testable half of [`dump_if_requested`]. Never fails.
 pub fn dump_to(path: &Path, stdin: &[u8]) {
     use std::io::Write;
-    let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    else {
+    // Private: a payload holds the whole prompt. And never through a link.
+    let Some(mut file) = crate::core::files::open_private_append(path) else {
         return;
     };
     // One payload per line, so `jq` can read the file directly.

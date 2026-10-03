@@ -20,6 +20,7 @@
 //! for politeness; losing it must never cost more than an extra chime.
 
 use crate::core::event::State;
+use crate::core::files;
 use crate::core::paths::Paths;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -67,7 +68,7 @@ fn session_file(paths: &Paths, session_id: &str) -> PathBuf {
 }
 
 fn read_session(paths: &Paths, session_id: &str) -> SessionState {
-    std::fs::read_to_string(session_file(paths, session_id))
+    files::read_bounded(&session_file(paths, session_id), files::limit::STATE)
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
@@ -160,26 +161,12 @@ fn update_session(paths: &Paths, session_id: &str, edit: impl FnOnce(&mut Sessio
 /// half-written file. The temp name includes the target so two writes from the
 /// same process to the same directory cannot collide.
 fn atomic_write(path: &Path, bytes: &[u8]) {
-    let Some(parent) = path.parent() else { return };
-    if std::fs::create_dir_all(parent).is_err() {
-        return;
-    }
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let tmp = parent.join(format!(".{}.{}.tmp", name, std::process::id()));
-    if std::fs::write(&tmp, bytes).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return;
-    }
-    if std::fs::rename(&tmp, path).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
+    // Private: nobody else has a reason to read when you last ran an agent.
+    let _ = files::replace_private(path, bytes);
 }
 
 fn read_ts(path: &Path) -> Option<DateTime<Utc>> {
-    let raw = std::fs::read_to_string(path).ok()?;
+    let raw = files::read_bounded(path, files::limit::STATE).ok()?;
     DateTime::parse_from_rfc3339(raw.trim())
         .ok()
         .map(|d| d.with_timezone(&Utc))

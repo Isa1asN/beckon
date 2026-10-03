@@ -4,6 +4,7 @@
 //! lets the test suite run without ever touching a developer's real config,
 //! and what makes `beckon doctor` output reproducible.
 
+use crate::core::files;
 use std::path::{Path, PathBuf};
 
 /// Every filesystem location beckon uses, resolved once.
@@ -89,8 +90,15 @@ const MAX_ANCESTORS: usize = 64;
 ///
 /// Nearest marker wins, so a nested repository is its own project. Falls back to
 /// the starting directory when nothing is found.
+///
+/// The walk never climbs into a directory every account can write. Without
+/// that, a `.beckon.toml` another user left in `/tmp` applied to anything you
+/// ran under it — `enabled = false` was enough to silence a stranger's alerts.
 pub fn project_root(from: &Path) -> PathBuf {
-    for dir in from.ancestors().take(MAX_ANCESTORS) {
+    for (depth, dir) in from.ancestors().take(MAX_ANCESTORS).enumerate() {
+        if depth > 0 && files::world_writable(dir) {
+            break;
+        }
         if ROOT_MARKERS.iter().any(|marker| dir.join(marker).exists()) {
             return dir.to_path_buf();
         }
@@ -235,6 +243,26 @@ mod tests {
             "vcs_root took {:?}",
             started.elapsed()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_marker_in_a_world_writable_parent_is_not_climbed_to() {
+        // Another account's /tmp/.beckon.toml must not apply to your
+        // /tmp/scratch, which has no marker of its own.
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let shared = d.path().join("shared");
+        let mine = shared.join("scratch");
+        std::fs::create_dir_all(&mine).unwrap();
+        std::fs::write(shared.join(".beckon.toml"), "enabled = false").unwrap();
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o1777)).unwrap();
+
+        assert_eq!(project_root(&mine), mine);
+
+        // The same layout in a directory only you can write still climbs.
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(project_root(&mine), shared);
     }
 
     #[test]

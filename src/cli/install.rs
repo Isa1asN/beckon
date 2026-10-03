@@ -10,7 +10,7 @@
 //!   overwritten with something "clean".
 
 use crate::adapter::{adapter_for, Adapter, Scope};
-use crate::core::paths;
+use crate::core::{files, paths};
 use crate::settings_json::{self, InstallPlan};
 use serde_json::Value;
 use std::io::IsTerminal;
@@ -73,8 +73,8 @@ pub fn init(options: Options) -> i32 {
         plan.bindings.len(),
         options.agent
     );
-    println!("  file    {}", settings_path.display());
-    println!("  command {command}");
+    println!("  file    {}", crate::cli::safe_path(&settings_path));
+    println!("  command {}", crate::cli::safe(&command));
     println!();
     print_diff(&existing, &merged);
 
@@ -181,15 +181,26 @@ fn resolve(options: &Options) -> Option<(Box<dyn Adapter>, PathBuf)> {
 ///
 /// Absolute rather than bare `beckon`: hooks can run with a minimal `PATH`, and
 /// a hook that silently fails to resolve is indistinguishable from a broken one.
+///
+/// Quoted for a POSIX shell, which is what runs it: `sh`/`bash`/`zsh`, and Git
+/// Bash on Windows. Forward slashes on Windows, since an unquoted backslash is
+/// an escape to Git Bash — `C:\Users\me` reads as `C:Usersme` — while both Git
+/// Bash and PowerShell accept `C:/Users/me`.
 fn invocation() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let exe = simplify(exe.canonicalize().unwrap_or(exe));
     let path = exe.display().to_string();
-    Some(if path.contains(char::is_whitespace) {
-        format!("\"{path}\" hook claude-code")
+    let path = if cfg!(windows) {
+        path.replace('\\', "/")
     } else {
-        format!("{path} hook claude-code")
-    })
+        path
+    };
+    let quoted = if cfg!(windows) {
+        settings_json::shell_quote_windows(&path)
+    } else {
+        settings_json::shell_quote(&path)
+    };
+    Some(format!("{quoted} hook claude-code"))
 }
 
 /// Undo the extended-length prefix `canonicalize` adds on Windows.
@@ -223,35 +234,38 @@ fn simplify(path: PathBuf) -> PathBuf {
 /// and PowerShell produce — was silently replaced with beckon's hooks alone,
 /// and the preview cheerfully showed it as having been empty.
 pub(crate) fn read_settings(path: &Path) -> Result<Value, String> {
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Value::Object(Default::default()))
-        }
-        Err(e) => return Err(format!("{}: cannot be read ({e}).", path.display())),
-    };
-
-    // A FIFO would block forever; a directory or device is not a settings file.
-    if !metadata.is_file() && !metadata.file_type().is_symlink() {
+    // Regular files only, and bounded: a FIFO would block forever, and a
+    // symlink to /dev/zero — which a repository can commit as its
+    // `.claude/settings.json` — would read until memory ran out.
+    // A dangling symlink would read as absent — an empty document — and the
+    // write would then replace the link with a regular file, cutting off the
+    // dotfiles repository it pointed into.
+    if files::is_symlink(path) && !path.exists() {
         return Err(format!(
-            "{} is not a regular file. Refusing to touch it.",
+            "{} is a symlink to a file that does not exist. Refusing to replace it.",
             path.display()
         ));
     }
-
-    let bytes =
-        std::fs::read(path).map_err(|e| format!("{}: cannot be read ({e}).", path.display()))?;
-    if bytes.is_empty() {
-        return Ok(Value::Object(Default::default()));
-    }
-
-    let text = String::from_utf8(bytes).map_err(|_| {
-        format!(
-            "{} is not valid UTF-8 — it may be UTF-16, as saved by some Windows \
-             editors.\nRefusing to touch it. Re-save it as UTF-8 and try again.",
-            path.display()
-        )
-    })?;
+    let text = match files::read_bounded(path, files::limit::SETTINGS) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Value::Object(Default::default()))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return Err(format!(
+                "{} is not valid UTF-8 — it may be UTF-16, as saved by some Windows \
+                 editors.\nRefusing to touch it. Re-save it as UTF-8 and try again.",
+                path.display()
+            ))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {
+            return Err(format!(
+                "{} is not a regular file. Refusing to touch it.",
+                path.display()
+            ))
+        }
+        Err(e) => return Err(format!("{}: cannot be read ({e}).", path.display())),
+    };
     if text.trim().is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -392,9 +406,20 @@ fn backup(path: &Path) -> std::io::Result<Option<PathBuf>> {
             format!("-{attempt}")
         };
         let copy = path.with_file_name(format!("{base}.beckon-backup-{stamp}{suffix}"));
-        if !copy.exists() {
-            std::fs::copy(path, &copy)?;
-            return Ok(Some(copy));
+        // Exclusive create, never an existence check followed by a copy: the
+        // copy carries every secret in the original, so it must not land on
+        // anything that already exists — a symlink included.
+        match files::create_private_like(&copy, path) {
+            Ok(mut file) => {
+                let mut original = std::fs::File::open(path)?;
+                if let Err(e) = std::io::copy(&mut original, &mut file) {
+                    let _ = std::fs::remove_file(&copy);
+                    return Err(e);
+                }
+                return Ok(Some(copy));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
         }
     }
     Err(std::io::Error::other(
@@ -403,14 +428,7 @@ fn backup(path: &Path) -> std::io::Result<Option<PathBuf>> {
 }
 
 fn write_settings(path: &Path, value: &Value) -> std::io::Result<()> {
-    // Write through a symlink to its target. Renaming over the link itself
-    // would replace it with a regular file, quietly severing the dotfiles
-    // repository someone is managing this file with.
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     if let Ok(metadata) = std::fs::metadata(&target) {
         if metadata.permissions().readonly() {
             return Err(std::io::Error::other(format!(
@@ -423,19 +441,12 @@ fn write_settings(path: &Path, value: &Value) -> std::io::Result<()> {
     let mut text = serde_json::to_string_pretty(value)?;
     text.push('\n');
 
-    // Temp plus rename, so an interrupted write cannot leave the agent with a
-    // truncated settings file. The temp is removed if anything goes wrong, so a
-    // full disk does not litter the directory.
-    let tmp = target.with_extension(format!("beckon-tmp-{}", std::process::id()));
-    if let Err(e) = std::fs::write(&tmp, text) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    if let Err(e) = std::fs::rename(&tmp, &target) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    Ok(())
+    // Atomic, through a symlink to its target, and keeping the file's exact
+    // permissions. That last part matters most: settings.json holds API keys
+    // and MCP tokens, and writing it via a temp file created with the default
+    // umask used to turn a 0600 file into 0664, readable by every account on
+    // the machine.
+    files::replace(path, text.as_bytes())
 }
 
 #[cfg(all(test, windows))]

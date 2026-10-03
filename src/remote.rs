@@ -123,14 +123,15 @@ fn label(state: State) -> &'static str {
 
 /// Make a project name safe inside an OSC payload.
 ///
-/// Control characters would end or corrupt the sequence, and `;` is OSC 777's
-/// field separator — `a;b` as a title would split the notification in two.
+/// Control characters would end or corrupt the sequence, invisible bidi and
+/// format characters would make the notification read as something it is not,
+/// and `;` is OSC 777's field separator — `a;b` as a title would split the notification in two.
 /// Bounded, because a notification is a glance, not a log.
 fn clean(name: &str) -> String {
     const MAX_CHARS: usize = 60;
     let cleaned: String = name
         .chars()
-        .filter(|c| !c.is_control())
+        .filter(|c| !c.is_control() && !crate::text::hidden(*c))
         .map(|c| if c == ';' { ',' } else { c })
         .collect();
     let cleaned = cleaned.trim();
@@ -185,16 +186,45 @@ mod tests {
             if ![0, 1, 2, 9, 99, 777].contains(&ps.parse::<u32>().unwrap_or(u32::MAX)) {
                 return false;
             }
-            let opens_with_digit = body
-                .trim_start()
-                .trim_start_matches(['+', '-'])
-                .starts_with(|c: char| c.is_ascii_digit());
-            if ps == "9" && opens_with_digit && !body.starts_with("4;") {
+            if ps == "9" && !osc9_body_allowed(body) {
                 return false;
             }
             i = end + width;
         }
         true
+    }
+
+    /// The OSC 9 rule exactly: control characters are stripped first, the
+    /// `4;state[;percent]` progress form is allowed, and otherwise the body may
+    /// not open — after whitespace, U+180E or U+200B, and one sign — with a
+    /// digit of any script. Stricter than needed is fine here; looser is not.
+    fn osc9_body_allowed(body: &str) -> bool {
+        let body: String = body
+            .chars()
+            .filter(|c| !((*c as u32) < 32 || *c == '\x7f' || ('\u{80}'..='\u{9f}').contains(c)))
+            .collect();
+        if is_progress(&body) {
+            return true;
+        }
+        let rest = body
+            .trim_start_matches(|c: char| c.is_whitespace() || c == '\u{180e}' || c == '\u{200b}');
+        let rest = rest.strip_prefix(['+', '-']).unwrap_or(rest);
+        !rest.starts_with(|c: char| c.is_numeric())
+    }
+
+    /// `^4;[0-4](;(100|\d{1,2})?)?$`
+    fn is_progress(body: &str) -> bool {
+        let Some(rest) = body.strip_prefix("4;") else {
+            return false;
+        };
+        let mut parts = rest.splitn(2, ';');
+        let state_ok = matches!(parts.next(), Some("0" | "1" | "2" | "3" | "4"));
+        let percent_ok = match parts.next() {
+            None | Some("") => true,
+            Some("100") => true,
+            Some(p) => (1..=2).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()),
+        };
+        state_ok && percent_ok
     }
 
     fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<OsString> {
@@ -261,6 +291,8 @@ mod tests {
             "a;b;c",
             "evil\x07\x1b]0;pwned\x07",
             "\u{9b}31m",
+            "rlo\u{202e}gnp.exe",
+            "\u{200b}1",
             "",
         ] {
             let seq = sequence(&ALL, State::Done, project);
@@ -282,6 +314,11 @@ mod tests {
         assert!(!agent_accepts("\x1b[31m"));
         assert!(!agent_accepts("\x1b]9;unterminated"));
         assert!(agent_accepts("\x1b]9;4;1;50\x07"));
+        assert!(!agent_accepts("\x1b]9;4;garbage\x07"));
+        assert!(!agent_accepts("\x1b]9;4;9;999\x07"));
+        assert!(!agent_accepts("\x1b]9;\u{663} arabic-indic three\x07"));
+        assert!(!agent_accepts("\x1b]9;\u{200b}1 hidden digit\x07"));
+        assert!(!agent_accepts("\x1b]9;\x015 control then digit\x07"));
         assert!(agent_accepts("\x1b]777;notify;t;b\x1b\\"));
     }
 
@@ -313,6 +350,12 @@ mod tests {
             "nothing that could steer the agent"
         );
         assert!(hook_output(&[], State::Done, "p").is_none());
+    }
+
+    #[test]
+    fn invisible_formatting_never_reaches_a_notification() {
+        let seq = sequence(&[Sequence::Osc9], State::Done, "rlo\u{202e}gnp.exe\u{2066}");
+        assert_eq!(seq, "\x1b]9;Done — go look · rlognp.exe\x07");
     }
 
     #[test]

@@ -90,6 +90,11 @@ pub fn render(def: &SynthDef, transpose_semitones: f32) -> Pcm {
         }
     }
 
+    // Before the reverb as well as after: its combs feed back, so one NaN
+    // from any layer would otherwise smear across the whole tail.
+    scrub(&mut left);
+    scrub(&mut right);
+
     if let Some(rv) = def.reverb {
         reverb(&mut left, SAMPLE_RATE, rv.room, rv.mix);
         reverb(&mut right, SAMPLE_RATE, rv.room, rv.mix);
@@ -107,6 +112,11 @@ pub fn render(def: &SynthDef, transpose_semitones: f32) -> Pcm {
         samples.push(soft_clip(r * gain));
     }
 
+    // A last line, whatever got past the input checks: a non-finite sample
+    // reaches the device as noise or, through normalisation, silences the
+    // whole sound while `test` reports it as fine.
+    scrub(&mut samples);
+
     if def.normalize {
         peak_normalize(&mut samples, TARGET_DBFS);
     }
@@ -116,6 +126,14 @@ pub fn render(def: &SynthDef, transpose_semitones: f32) -> Pcm {
         channels: CHANNELS,
         samples,
     }
+}
+
+/// Zero any non-finite sample.
+fn scrub(samples: &mut [f32]) {
+    samples
+        .iter_mut()
+        .filter(|s| !s.is_finite())
+        .for_each(|s| *s = 0.0);
 }
 
 /// How long a layer occupies, including the release tail of its last note.
@@ -186,7 +204,11 @@ fn render_layer(
     let envelope = Adsr {
         attack_ms: layer.attack_ms,
         decay_ms: layer.decay_ms,
-        sustain: layer.sustain,
+        sustain: if layer.sustain.is_finite() {
+            layer.sustain.clamp(0.0, 1.0)
+        } else {
+            0.0
+        },
         release_ms: layer.release_ms,
     };
 
@@ -294,8 +316,8 @@ fn oscillator(
                 ratio: 2.0,
                 index: 3.0,
             });
-            let modulator = (TAU * phase * f64::from(fm.ratio)).sin();
-            (TAU * phase + f64::from(fm.index) * modulator).sin() as f32
+            let modulator = (TAU * phase * f64::from(finite_signed(fm.ratio))).sin();
+            (TAU * phase + f64::from(finite_signed(fm.index)) * modulator).sin() as f32
         }
     }
 }
@@ -402,6 +424,41 @@ mod tests {
     fn a_layer_with_no_notes_renders_silence() {
         let p = render(&synth(vec![layer(Wave::Sine, vec![])]), 0.0);
         assert!(p.samples.iter().all(|s| s.abs() < 1e-9));
+    }
+
+    #[test]
+    fn non_finite_parameters_cannot_poison_the_render() {
+        // Each of these used to turn every sample NaN: silent, while `test`
+        // reported a normal duration.
+        let tone = || layer(Wave::Sine, vec![Note::Hz(440.0)]);
+        let finite_and_audible = |def: &SynthDef| {
+            let pcm = render(def, 0.0);
+            pcm.samples.iter().all(|s| s.is_finite()) && peak(&pcm) > 0.1
+        };
+
+        let mut def = synth(vec![tone()]);
+        def.reverb = Some(Reverb {
+            room: 0.5,
+            mix: f32::NAN,
+        });
+        assert!(finite_and_audible(&def), "reverb mix NaN");
+        def.reverb = Some(Reverb {
+            room: f32::NAN,
+            mix: 0.3,
+        });
+        assert!(finite_and_audible(&def), "reverb room NaN");
+
+        let mut nan_sustain = tone();
+        nan_sustain.sustain = f32::NAN;
+        let pcm = render(&synth(vec![nan_sustain]), 0.0);
+        assert!(pcm.samples.iter().all(|s| s.is_finite()), "sustain NaN");
+
+        let mut fm = layer(Wave::Fm, vec![Note::Hz(440.0)]);
+        fm.fm = Some(Fm {
+            ratio: f32::INFINITY,
+            index: f32::NAN,
+        });
+        assert!(finite_and_audible(&synth(vec![fm])), "fm inf/NaN");
     }
 
     #[test]

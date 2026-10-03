@@ -11,7 +11,7 @@ pub fn show() -> i32 {
     let loaded = Config::load_verbose(&paths, Some(&paths::project_root(&cwd)));
 
     println!("# effective configuration");
-    println!("# user   {}", paths.config_file.display());
+    println!("# user   {}", crate::cli::safe_path(&paths.config_file));
     println!();
     for key in config_edit::settable_keys() {
         println!(
@@ -40,7 +40,7 @@ pub fn get(key: &str) -> i32 {
             0
         }
         None => {
-            eprintln!("unknown setting `{key}`");
+            eprintln!("unknown setting `{}`", crate::cli::safe(key));
             eprintln!();
             eprintln!("Valid settings:");
             for k in config_edit::settable_keys() {
@@ -54,7 +54,7 @@ pub fn get(key: &str) -> i32 {
 pub fn set(key: &str, value: &str) -> i32 {
     let paths = Paths::resolve();
     if let Err(e) = config_edit::set(&paths.config_file, key, value) {
-        eprintln!("{e}");
+        eprintln!("{}", crate::cli::safe(&e.to_string()));
         return 2;
     }
 
@@ -72,7 +72,7 @@ pub fn set(key: &str, value: &str) -> i32 {
 }
 
 pub fn path() -> i32 {
-    println!("{}", Paths::resolve().config_file.display());
+    println!("{}", crate::cli::safe_path(&Paths::resolve().config_file));
     0
 }
 

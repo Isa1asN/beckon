@@ -5,6 +5,7 @@
 //! edit made by `beckon use` or `beckon config set`.
 
 use crate::core::config::KNOWN_KEYS;
+use crate::core::files;
 use std::path::Path;
 use toml_edit::{DocumentMut, Item, Value};
 
@@ -90,7 +91,7 @@ pub fn set(path: &Path, key: &str, raw: &str) -> Result<(), EditError> {
     // the change never landed. Silence is the one failure we must not race into.
     let _guard = crate::core::state::lock_path(path);
 
-    let text = match std::fs::read_to_string(path) {
+    let text = match files::read_bounded(path, files::limit::CONFIG) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(EditError::Read(path.display().to_string(), e.to_string())),
@@ -123,7 +124,9 @@ pub fn set(path: &Path, key: &str, raw: &str) -> Result<(), EditError> {
         None => doc[key] = Item::Value(value),
     }
 
-    write_atomic(path, doc.to_string().as_bytes())
+    // Keeps the file's mode, and writes through a symlink rather than
+    // replacing it — a dotfiles-managed config.toml stays managed.
+    files::replace(path, doc.to_string().as_bytes())
         .map_err(|e| EditError::Write(path.display().to_string(), e.to_string()))
 }
 
@@ -211,15 +214,6 @@ fn parse_bool(raw: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     }
-}
-
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension(format!("beckon-tmp-{}", std::process::id()));
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
 }
 
 #[cfg(test)]

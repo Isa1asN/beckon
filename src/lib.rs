@@ -13,4 +13,5 @@ pub mod guard;
 pub mod pack;
 pub mod remote;
 pub mod settings_json;
+pub mod text;
 pub mod trace;

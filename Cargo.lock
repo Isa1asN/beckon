@@ -127,6 +127,7 @@ dependencies = [
  "chrono",
  "clap",
  "directories",
+ "libc",
  "predicates",
  "rodio",
  "serde",

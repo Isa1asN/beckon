@@ -519,33 +519,76 @@ sequences = ["bel", "osc9"]  # osc777 opt-in
 ## 16. Trust boundaries
 
 Three sources of input are trusted differently. The distinctions are enforced,
-not advisory.
+not advisory, and each one has a test that runs the attack.
 
 **The user's own config** may name any file. It is their machine; refusing
 absolute paths would defeat the point of `[sounds]`.
 
 **A project's `.beckon.toml`** arrives with a repository and may change *when*
-beckon makes a noise — `enabled`, `pack`, `[events]`, policy — but may **not**
-set `[sounds]`. Letting it name files would hand any cloned repository the
-ability to have arbitrary paths opened and fed to a media decoder. The refusal
-is reported rather than silent.
+beckon makes a noise — `enabled`, `pack`, `[events]`, policy. It may **not**
+set `[sounds]`: letting it name files would hand any cloned repository the
+ability to have arbitrary paths opened and fed to a media decoder. Nor
+`[remote]`: whether alerts go to your speakers or your terminal is a choice about
+your machine. Both refusals are reported rather than silent. A project config
+is ignored if it is a symlink (a repository has no reason to ship one) or sits
+in a directory every account can write, and the search for one never climbs
+into such a directory — otherwise another user's `/tmp/.beckon.toml` applied
+to anything run under `/tmp`.
 
 **A pack manifest** may reference sample files only *inside its own directory*,
 verified after canonicalization so a symlink cannot leave. Extensions are
-allowlisted, and packs are never executed.
+allowlisted, packs are never executed, and a pack whose manifest claims an id
+other than its directory's is skipped rather than listed as that pack.
 
-Independently of provenance, every decode is bounded: regular files only (so a
-character device or FIFO cannot stall playback), 10 MiB before reading, 30
-seconds and an absolute sample ceiling while decoding. Synth rendering is bounded
-the same way, on a budget of samples written — capping duration and note count
-separately is not enough, because the cost is their product.
+**Every file read is bounded**, whoever wrote it (`core::files`): regular files
+only, so a FIFO cannot block the hook and a symlink to `/dev/zero` — which git
+will commit — cannot read until memory runs out; and a size cap per kind of
+file (64 KiB for config, 256 KiB for a pack manifest, 8 MiB for settings). Hook
+stdin is capped at 4 MiB. Before this, one `.beckon.toml` linked to `/dev/zero`
+took the hook to 2 GB on every event.
 
-Untrusted text is escaped before it reaches a terminal. Pack metadata and config
-keys are read from files beckon did not write, and echoing them raw would let
-them clear the screen or retitle the window.
+**Every decode and render is bounded**: 10 MiB before reading, 30 seconds and an
+absolute sample ceiling while decoding, a WAV header vetted before the decoder
+sees it (it panics on a zero sample rate), and synth rendering on a budget of
+samples written — capping duration and note count separately is not enough,
+because the cost is their product. Non-finite parameters cannot reach the
+output.
+
+**Every write is private and exclusive.** Replacements go through a temp file
+created with `create_new` and the final mode already set, so nothing is
+followed through a planted symlink and nothing is ever more readable than it
+was. `settings.json` keeps its exact mode — it holds API keys, and writing it
+the naive way turned 0600 into 0664. beckon's own state is 0600. The
+`BECKON_TRACE` and `BECKON_DUMP` files are created 0600 and never written
+through a link, and `doctor` suggests them in the state directory: a dump holds
+whole prompts.
+
+**The hook command is quoted for a shell**, because one runs it: single-quoted
+whenever the install path holds anything but plain characters; on Windows,
+forward slashes and double quotes, which Git Bash and cmd.exe both read. A `'` in the path (an account called O'Brien)
+used to leave the quote unterminated — exit 2, a blocking error on every
+prompt — and `$(...)` in it ran.
+
+**Nothing is executed from where the agent stands.** System players are found
+in absolute `PATH` entries only and run by absolute path: the player runs with
+the agent's working directory, and `.` on `PATH` let a repository's own
+`paplay` run. `doctor` never executes a program named by a repository's
+settings.
+
+**Untrusted text is escaped** before it reaches a terminal or a log — control
+characters, and the invisible bidi and format characters that make a line read
+as something it is not. Pack metadata, config keys, pack ids and directory
+names all come from files beckon did not write. The trace log is escaped too,
+so a config key with an embedded newline cannot forge a decision line.
 
 ## 17. Known limitations
 
+- **A Windows install path that needs quoting, with no Git Bash.** Claude Code
+  then runs hooks in PowerShell, which will not run a quoted path as a command
+  in any quoting style. Claude Code's exec form (`"args": [...]`, no shell)
+  would avoid shells altogether, but a version that predates it would run bare
+  `beckon` — exit 2, blocking every prompt — so `init` does not write it until
+  a minimum Claude Code version can be required.
 - **Settings files are re-serialised.** beckon refuses shapes it cannot handle —
   invalid JSON or UTF-8, a non-object root, an unfamiliar `hooks` shape — but a
   file it does accept is rewritten in canonical form: CRLF becomes LF,

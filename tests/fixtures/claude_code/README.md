@@ -37,5 +37,6 @@ To capture more, bind a dump-only hook and drive a real session:
 claude --settings /path/to/dump-settings.json -p "..."
 ```
 
-or set `BECKON_DUMP=/tmp/hooks.jsonl` with beckon already installed, which
+or set `BECKON_DUMP=~/.local/state/beckon/hooks.jsonl` with beckon already
+installed (not a shared directory such as `/tmp`: payloads include prompts), which
 appends every raw payload as one JSON line.

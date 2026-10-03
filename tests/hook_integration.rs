@@ -95,6 +95,11 @@ impl Env {
         self.event(r#""hook_event_name":"UserPromptSubmit""#)
     }
 
+    /// The user's own config — the only place `[remote]` and `[sounds]` count.
+    fn user_config(&self, body: &str) {
+        std::fs::write(self.home.path().join("config.toml"), body).unwrap();
+    }
+
     fn project_config(&self, body: &str) {
         std::fs::write(self.project.path().join(".beckon.toml"), body).unwrap();
     }
@@ -489,7 +494,7 @@ fn over_ssh_a_suppressed_sound_prints_nothing() {
 #[test]
 fn remote_off_keeps_sound_local_even_over_ssh() {
     let e = Env::new();
-    e.project_config("[remote]\nmode = \"off\"\n");
+    e.user_config("[remote]\nmode = \"off\"\n");
     assert_eq!(e.hook_over_ssh(&e.stop()), "");
     let t = e.traced();
     assert!(t.contains("play done"), "{t}");
@@ -499,7 +504,7 @@ fn remote_off_keeps_sound_local_even_over_ssh() {
 #[test]
 fn remote_both_rings_the_terminal_and_plays_locally() {
     let e = Env::new();
-    e.project_config("[remote]\nmode = \"both\"\nsequences = [\"osc777\"]\n");
+    e.user_config("[remote]\nmode = \"both\"\nsequences = [\"osc777\"]\n");
     let out = e.hook_over_ssh(&e.stop());
     assert!(terminal_sequence(&out).starts_with("\x1b]777;notify;beckon;Done — go look"));
     assert!(!e.traced().contains("local audio skipped"));
@@ -527,7 +532,7 @@ fn an_alert_with_no_route_is_not_recorded_as_played() {
     // Terminal-only route, nothing to send: silent, and must stay out of the
     // history so it cannot rate-limit or gate the next alert.
     let e = Env::new();
-    e.project_config("[remote]\nmode = \"always\"\nsequences = []\n");
+    e.user_config("[remote]\nmode = \"always\"\nsequences = []\n");
     assert_eq!(e.hook_over_ssh(&e.stop()), "");
     let t = e.traced();
     assert!(t.contains("dropped done: remote.sequences is empty"), "{t}");
@@ -542,4 +547,27 @@ fn over_ssh_garbage_still_prints_nothing() {
     for bad in ["", "not json", "{", r#"{"hook_event_name":"Stop""#] {
         assert_eq!(e.hook_over_ssh(bad), "", "{bad:?}");
     }
+}
+
+#[test]
+fn a_project_cannot_decide_where_your_alerts_go() {
+    // Local speakers or your terminal is a choice about your machine. A cloned
+    // repository's config is ignored for it, and says so.
+    let e = Env::new();
+    e.project_config("[remote]\nmode = \"always\"\n");
+    assert!(
+        !e.hook_over_ssh(&e.stop()).is_empty(),
+        "auto over SSH still sends"
+    );
+    let t = e.traced();
+    assert!(t.contains("ignoring [remote]"), "{t}");
+
+    let e = Env::new();
+    e.project_config("[remote]\nmode = \"always\"\n");
+    e.hook(&e.stop());
+    let t = e.traced();
+    assert!(
+        !t.contains("local audio skipped"),
+        "the project silenced local audio: {t}"
+    );
 }

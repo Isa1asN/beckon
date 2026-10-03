@@ -158,11 +158,20 @@ impl Biquad {
 /// Extends `samples` by the tail length. `room` sets decay, `mix` the wet/dry
 /// blend; `mix <= 0.0` is a no-op.
 pub fn reverb(samples: &mut Vec<f32>, sample_rate: u32, room: f32, mix: f32) {
-    let mix = mix.clamp(0.0, 1.0);
+    // `clamp` passes NaN straight through, and one NaN in a feedback comb
+    // turns the whole tail — then the whole sound — into NaN.
+    let unit = |v: f32| {
+        if v.is_finite() {
+            v.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    };
+    let mix = unit(mix);
     if mix <= 0.0 || samples.is_empty() {
         return;
     }
-    let room = room.clamp(0.0, 1.0);
+    let room = unit(room);
 
     // Classic Schroeder delays, mutually non-harmonic so the tail does not ring.
     const COMB_MS: [f32; 4] = [29.7, 37.1, 41.1, 43.7];

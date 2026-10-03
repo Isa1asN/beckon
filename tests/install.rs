@@ -801,3 +801,186 @@ fn doctor_gives_up_on_a_wrapper_that_never_closes_its_output() {
     );
     assert!(report.contains("did not report a version"), "{report}");
 }
+
+#[cfg(unix)]
+fn mode_of(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+#[cfg(unix)]
+#[test]
+fn a_private_settings_file_stays_private_through_init_and_uninstall() {
+    // settings.json holds API keys and MCP tokens. Rewriting it through a temp
+    // file created with the default umask used to leave it 0664.
+    use std::os::unix::fs::PermissionsExt;
+    let e = Env::new();
+    e.write_settings(r#"{"env":{"ANTHROPIC_API_KEY":"sk-not-real"}}"#);
+    std::fs::set_permissions(e.settings_path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    e.beckon().args(["init", "--yes"]).assert().code(0);
+    assert_eq!(
+        mode_of(&e.settings_path()),
+        0o600,
+        "init loosened settings.json"
+    );
+    for backup in e.backups() {
+        assert_eq!(
+            mode_of(&e.claude.path().join(&backup)),
+            0o600,
+            "{backup} is not private"
+        );
+    }
+
+    e.beckon().args(["uninstall", "--yes"]).assert().code(0);
+    assert_eq!(
+        mode_of(&e.settings_path()),
+        0o600,
+        "uninstall loosened settings.json"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_settings_file_keeps_whatever_mode_it_had() {
+    // Not tightened either: someone who shares it on purpose keeps sharing it.
+    use std::os::unix::fs::PermissionsExt;
+    let e = Env::new();
+    e.write_settings("{}");
+    std::fs::set_permissions(e.settings_path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    e.beckon().args(["init", "--yes"]).assert().code(0);
+    assert_eq!(mode_of(&e.settings_path()), 0o644);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_settings_file_init_creates_is_private() {
+    let e = Env::new();
+    e.beckon().args(["init", "--yes"]).assert().code(0);
+    assert_eq!(mode_of(&e.settings_path()), 0o600);
+}
+
+/// Run a binary this test just copied. Exec can fail with ETXTBSY when another
+/// test thread forks while the copy is still open for writing; that one error
+/// is retried, anything else is a real failure.
+#[cfg(unix)]
+fn output_of_copied(command: &mut std::process::Command) -> std::process::Output {
+    for _ in 0..100 {
+        match command.output() {
+            Err(e) if e.raw_os_error() == Some(26) => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            other => return other.unwrap(),
+        }
+    }
+    panic!("binary stayed busy")
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hostile_install_path_is_quoted_so_the_hook_runs_exactly_beckon() {
+    // The hook command goes through a shell. An install path containing a
+    // quote used to leave it unterminated (exit 2: a blocking error on every
+    // prompt), and `$(...)` or `;` in it ran as commands.
+    let ours = assert_cmd::cargo::cargo_bin("beckon");
+    for name in [
+        "o'brien",
+        "semi;touch PWNED_SEMI;x",
+        "$(touch PWNED_SUBST)",
+        "sp `touch PWNED_BT`",
+    ] {
+        let e = Env::new();
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join(name);
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let bin = bin_dir.join("beckon");
+        std::fs::copy(&ours, &bin).unwrap();
+
+        let out = output_of_copied(
+            std::process::Command::new(&bin)
+                .args(["init", "--yes"])
+                .env("CLAUDE_CONFIG_DIR", e.claude.path())
+                .env("BECKON_HOME", e._home.path()),
+        );
+        assert_eq!(out.status.code(), Some(0), "{name}: {out:?}");
+        let command = commands_for(&e.read_settings(), "Stop").remove(0);
+
+        // Run it the way the agent does, from a scratch directory.
+        let cwd = tempfile::tempdir().unwrap();
+        let trace = cwd.path().join("trace.log");
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", &command])
+            .current_dir(cwd.path())
+            .env("BECKON_HOME", e._home.path())
+            .env("BECKON_AUDIO", "null")
+            .env("BECKON_TRACE", &trace)
+            .env_remove("SSH_CONNECTION")
+            .env_remove("SSH_TTY")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(br#"{"session_id":"s","hook_event_name":"Stop"}"#)
+            .unwrap();
+        let status = child.wait().unwrap();
+        assert_eq!(
+            status.code(),
+            Some(0),
+            "{name}: `{command}` exited {status}"
+        );
+        let traced = std::fs::read_to_string(&trace).unwrap_or_default();
+        assert!(
+            traced.contains("play done"),
+            "{name}: `{command}` did not run beckon: {traced}"
+        );
+        let created: Vec<_> = std::fs::read_dir(cwd.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("PWNED"))
+            .collect();
+        assert!(
+            created.is_empty(),
+            "{name}: the path ran as a command: {created:?}"
+        );
+
+        // And uninstall still recognises what init wrote.
+        let out = output_of_copied(
+            std::process::Command::new(&bin)
+                .args(["uninstall", "--yes"])
+                .env("CLAUDE_CONFIG_DIR", e.claude.path())
+                .env("BECKON_HOME", e._home.path()),
+        );
+        assert_eq!(out.status.code(), Some(0));
+        assert!(
+            commands_for(&e.read_settings(), "Stop").is_empty(),
+            "{name}: uninstall missed it"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_settings_symlink_is_refused_rather_than_replaced() {
+    // A dotfiles link whose target is not checked out. Read as empty, it would
+    // be overwritten with a regular file and the link cut.
+    let e = Env::new();
+    std::os::unix::fs::symlink(
+        e.claude.path().join("not-checked-out.json"),
+        e.settings_path(),
+    )
+    .unwrap();
+    e.beckon()
+        .args(["init", "--yes"])
+        .assert()
+        .code(1)
+        .stderr(contains("symlink to a file that does not exist"));
+    assert!(std::fs::symlink_metadata(e.settings_path())
+        .unwrap()
+        .file_type()
+        .is_symlink());
+}

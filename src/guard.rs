@@ -13,20 +13,35 @@
 
 use std::io::Write;
 
-/// Replace the default panic handler with one that exits 0.
+/// Replace the default panic handler.
 ///
 /// Install this as the very first statement in `main`, before any work.
 ///
-/// The default handler prints a backtrace to stderr and aborts with a non-zero
-/// status. Ours stays quiet unless `BECKON_DEBUG` is set, so a bug in beckon
-/// degrades to silence rather than noise in the user's terminal — while still
-/// being diagnosable on demand.
-pub fn install_panic_guard() {
-    std::panic::set_hook(Box::new(|info| {
-        if std::env::var_os("BECKON_DEBUG").is_some() {
-            let _ = writeln!(std::io::stderr(), "beckon: internal error: {info}");
+/// For the agent's invocations (`agent` is true) it exits 0, staying quiet
+/// unless `BECKON_DEBUG` is set, so a bug in beckon degrades to silence rather
+/// than a blocked agent or noise in its terminal.
+///
+/// For a person at a terminal it says so and exits non-zero. Exiting 0
+/// silently there was a lie: `beckon config set` on a sample that tripped a
+/// decoder bug printed nothing, wrote nothing, and reported success.
+pub fn install_panic_guard(agent: bool) {
+    std::panic::set_hook(Box::new(move |info| {
+        if agent {
+            if std::env::var_os("BECKON_DEBUG").is_some() {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "beckon: internal error: {}",
+                    crate::text::safe(&info.to_string())
+                );
+            }
+            exit_ok();
         }
-        exit_ok();
+        let _ = writeln!(
+            std::io::stderr(),
+            "beckon: internal error — this is a bug, and nothing more was done: {}",
+            crate::text::safe(&info.to_string())
+        );
+        exit_with(101);
     }));
 }
 

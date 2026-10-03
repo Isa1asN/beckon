@@ -26,17 +26,17 @@ pub fn run() -> i32 {
     println!();
 
     println!("paths");
-    println!("  config    {}", paths.config_file.display());
-    println!("  state     {}", paths.state_dir.display());
-    println!("  packs     {}", paths.packs_dir.display());
+    println!("  config    {}", crate::cli::safe_path(&paths.config_file));
+    println!("  state     {}", crate::cli::safe_path(&paths.state_dir));
+    println!("  packs     {}", crate::cli::safe_path(&paths.packs_dir));
     if std::env::var_os("BECKON_HOME").is_some() {
         println!("  (overridden by BECKON_HOME)");
     }
     println!();
 
     println!("project");
-    println!("  cwd       {}", cwd.display());
-    println!("  root      {}", root.display());
+    println!("  cwd       {}", crate::cli::safe_path(&cwd));
+    println!("  root      {}", crate::cli::safe_path(&root));
     let transpose = identity::transpose_for(&root, config.identity.per_project);
     if config.identity.per_project {
         println!("  identity  transposed {transpose:+} semitones");
@@ -65,7 +65,7 @@ pub fn run() -> i32 {
         }
         None => println!(
             "  pack      `{}` NOT FOUND — beckon will be silent",
-            config.pack
+            crate::cli::safe(&config.pack)
         ),
     }
     println!("  volume    {:.2}", config.volume);
@@ -82,10 +82,10 @@ pub fn run() -> i32 {
             // asking why it is quiet.
             let status = match crate::audio::sample::load(path) {
                 Ok(pcm) => format!("{:.0}ms", pcm.duration_ms()),
-                Err(e) => format!("BROKEN — {e}"),
+                Err(e) => format!("BROKEN — {}", crate::cli::safe(&e.to_string())),
             };
             println!("            {state:<14} {status}");
-            println!("            {:<14} {}", "", path.display());
+            println!("            {:<14} {}", "", crate::cli::safe_path(path));
         }
     }
 
@@ -228,8 +228,16 @@ pub fn run() -> i32 {
     }
 
     println!("debugging");
-    println!("  BECKON_TRACE=/tmp/beckon.log   log every decision");
-    println!("  BECKON_DUMP=/tmp/hooks.jsonl   capture raw hook payloads");
+    // In beckon's own state directory, not /tmp: the dump holds whole prompts,
+    // and a path in a shared directory is one someone else can prepare.
+    println!(
+        "  BECKON_TRACE={}   log every decision",
+        crate::cli::safe_path(&paths.state_dir.join("trace.log"))
+    );
+    println!(
+        "  BECKON_DUMP={}   capture raw hook payloads (they include your prompts)",
+        crate::cli::safe_path(&paths.state_dir.join("hooks.jsonl"))
+    );
     println!("  BECKON_AUDIO=null              force silence");
     println!("  beckon test                    hear the active pack");
 
@@ -322,7 +330,7 @@ fn describe_program(command: &str, may_run: bool) -> String {
     let Some(program) = settings_json::program_of(command) else {
         return "cannot tell which program this runs".to_string();
     };
-    let found = match locate(program) {
+    let found = match locate(&program) {
         Located::Found(path) => path,
         Located::Missing => {
             return "NOT FOUND — this hook cannot run, so every sound is lost".to_string()

@@ -16,14 +16,30 @@ use crate::trace::trace;
 use chrono::{Local, Utc};
 use std::io::Read;
 
+/// Largest hook payload beckon will parse. Claude Code's are a few KB; a
+/// prompt-sized one is still far below this.
+const MAX_PAYLOAD: u64 = 4 * 1024 * 1024;
+
 /// How long an abandoned session's state is kept before collection.
 const SESSION_RETENTION_DAYS: i64 = 7;
 
 pub fn run(agent: &str) {
     let mut payload = Vec::new();
-    // Drain stdin even if we end up doing nothing: leaving it unread can hand
-    // the agent a broken pipe on the write side.
-    if std::io::stdin().read_to_end(&mut payload).is_err() {
+    // Bounded: real payloads are a few KB, and an unbounded read into a parsed
+    // JSON tree could exhaust memory inside a process the agent waits on.
+    // Drain the rest even then: leaving stdin unread can hand the agent a
+    // broken pipe on the write side.
+    let mut stdin = std::io::stdin().lock();
+    if (&mut stdin)
+        .take(MAX_PAYLOAD + 1)
+        .read_to_end(&mut payload)
+        .is_err()
+    {
+        return;
+    }
+    if payload.len() as u64 > MAX_PAYLOAD {
+        let _ = std::io::copy(&mut stdin, &mut std::io::sink());
+        trace("ignore oversized payload");
         return;
     }
     dump_if_requested(&payload);

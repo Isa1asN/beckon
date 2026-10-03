@@ -50,7 +50,7 @@ pub fn use_pack(id: &str) -> i32 {
     // Check before writing: a config pointing at a pack that does not exist
     // makes beckon silent, and silence is indistinguishable from a bug.
     let Some((pack, _)) = store::load(&paths, id) else {
-        eprintln!("no pack named `{id}`.");
+        eprintln!("no pack named `{}`.", crate::cli::safe(id));
         eprintln!();
         eprintln!("Available:");
         for (pack, _) in store::list(&paths) {
@@ -60,7 +60,7 @@ pub fn use_pack(id: &str) -> i32 {
     };
 
     if let Err(e) = config_edit::set(&paths.config_file, "pack", id) {
-        eprintln!("{e}");
+        eprintln!("{}", crate::cli::safe(&e.to_string()));
         return 1;
     }
 
