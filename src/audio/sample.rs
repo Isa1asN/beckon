@@ -470,15 +470,18 @@ mod tests {
             bytes[offset..offset + width].fill(0);
             let path = dir.path().join(name);
             std::fs::write(&path, bytes).unwrap();
+            assert!(!plausible_wav(&path), "{name} passed the header check");
             assert!(
                 matches!(load(&path), Err(SampleError::Undecodable(_))),
                 "{name}: {:?}",
                 load(&path)
             );
         }
+        // The check itself, not `load`: a build without the embedded-audio
+        // feature has no decoder and refuses every file by design.
         let path = dir.path().join("fine.wav");
         std::fs::write(&path, &good).unwrap();
-        assert!(load(&path).is_ok(), "the check must not refuse a real WAV");
+        assert!(plausible_wav(&path), "the check must not refuse a real WAV");
     }
 
     #[test]
